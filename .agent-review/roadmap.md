@@ -19,8 +19,8 @@
 | [AGENT-001](issues/AGENT-001.md) | Скилл project-review: нет references/assets; 3 копии | high | small | done | 2026-07-02: скилл сделан глобальным (Windows-home канонический + symlink в WSL-home), 5 файлов references/assets созданы, проектная копия удалена |
 | [AGENT-002](issues/AGENT-002.md) | CLAUDE.md/AGENTS.md: desktop-слой невидим, ложное правило boundary | high | small | done | 2026-07-02: карта +workflows/desktop_bridge/secrets_store/desktop; 3 boundary вместо ложного одного |
 | [AGENT-006](issues/AGENT-006.md) | Ложный отчёт о верификации; правила нет в checked-in файлах | high | small | done | 2026-07-02: правило честной верификации добавлено в AGENTS.md |
-| [ARCH-001](issues/ARCH-001.md) | Пайплайн продублирован между cli.py и workflows.py | high | medium | in-progress | 2026-07-02: опции 2+3 — общий хвост вынесен, расхождение задокументировано; полная унификация (опция 1) отложена (нужен i18n) |
-| [ARCH-003](issues/ARCH-003.md) | output_formats — мёртвый вход контракта | medium | quick-win | proposed | |
+| [ARCH-001](issues/ARCH-001.md) | Пайплайн продублирован между cli.py и workflows.py | high | medium | done | 2026-07-02: CLI полностью через workflows (run/batch/summarize); сообщения RU, всегда .txt+.json, empty=fail; -f json (stdout) сохранён; ~20 тестов, реальный запуск |
+| [ARCH-003](issues/ARCH-003.md) | output_formats — мёртвый вход контракта | medium | quick-win | done | 2026-07-02: output_format/output_formats удалены из RunOptions, моста, фронта, контракта |
 | [ARCH-004](issues/ARCH-004.md) | stderr моста в null — логов нет | medium | quick-win | done | 2026-07-02: ротируемый recap-bridge.log в data dir (вариант 1, Python); тест |
 | [SEC-002](issues/SEC-002.md) | CSP отключён в Tauri | medium | quick-win | done | 2026-07-02: строгий CSP; пользователь подтвердил — работает |
 | [SEC-004](issues/SEC-004.md) | Скрытый fallback на OPENAI_API_KEY через SDK | medium | quick-win | done | 2026-07-02: factory требует ключ для внешних провайдеров; тесты (в т.ч. с OPENAI_API_KEY в env) |
@@ -51,7 +51,7 @@
 | [CODE-007](issues/CODE-007.md) | Статус ключа только для сохранённого провайдера | low | small | done | 2026-07-02: api_keys_configured{provider:bool} в get_settings; UI по черновому провайдеру; тесты+tsc |
 | [REL-006](issues/REL-006.md) | Гонка read-modify-write в history.json | low | small | done | 2026-07-02: файловый лок (msvcrt/fcntl) вокруг append/delete; тест |
 | [PERF-002](issues/PERF-002.md) | Чанковая суммаризация последовательная | low | medium | done | 2026-07-02: ThreadPoolExecutor(3) для чанков только на внешних провайдерах (localhost — последовательно), порядок сохранён; тесты |
-| [DEP-002](issues/DEP-002.md) | Vite/Vitest/Tailwind/React отстают на мажор(ы) | low | medium | in-progress | 2026-07-02: vite^7+vitest^3+plugin-react^5+react^19 (build/test зелёные). Tailwind 4 сознательно НЕ делаю вслепую — ломающие визуальные изменения (bare border→currentColor, outline/shadow/ring), а UI отсюда не вижу |
+| [DEP-002](issues/DEP-002.md) | Vite/Vitest/Tailwind/React отстают на мажор(ы) | low | medium | done | 2026-07-02: vite^7+vitest^3+react^19+tailwind^4; build/lint/test зелёные. TW4 — нужен визуальный обзор (границы/фокус/тени) |
 
 ## Журнал решений
 
@@ -132,3 +132,13 @@ run_one_file (CLI-путь не трогали — расхождение ARCH-0
 визуальным ревью запущенного app.
 2026-07-02 — AGENT-005 — заблокировано классификатором (само-модификация прав) даже при явной просьбе
 «доделать всё»: правку allowlist нужно делать вне auto-mode / через /update-config. Готовый JSON выдан.
+
+2026-07-02 — ARCH-001 — done (решение пользователя: унифицировать, расхождения не нужны). CLI run/batch/
+summarize идут через run_one_file/resummarize_one. Последствия (приняты): русские сообщения пайплайна
+(валидация провайдера/режима остаётся английской из фабрики), CLI всегда пишет .txt+.json, пустая
+транскрипция теперь fail и в batch. Сохранено: summarize -f json пишет оба файла, а в stdout отдаёт .json
+(пайпинг не потерян). batch переиспользует модель через transcriber_factory. Реальный recap.exe проверен.
+2026-07-02 — ARCH-003 — done. Мёртвое поле удалено везде (после ARCH-001 оно мёртво и в CLI).
+2026-07-02 — DEP-002 — done. Tailwind 4 мигрирован (@import+@config, компат-шимы для border/shadow).
+Собирается/линт/тесты зелёные, но ВИЗУАЛЬНО не проверено (headless) — пользователь смотрит границы,
+focus-ring (v4 outline-none/ring), тени в запущенном app.
