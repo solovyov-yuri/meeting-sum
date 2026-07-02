@@ -1,5 +1,5 @@
-import { HelpCircle, Loader2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { HelpCircle, Loader2, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Segmented, Select, Switch } from "@/components/ui/controls";
 import { useToast } from "@/components/ui/toast";
@@ -172,6 +172,70 @@ function nullableNumberInput(value: number | null, onChange: (n: number | null) 
   );
 }
 
+// Summarization model picker: a free-text field (authoritative) augmented with a datalist of
+// models fetched from the provider's /v1/models. Fetches on provider change + manual refresh —
+// never on every render, and never blocks Save if the fetch fails (degrades to plain text input).
+function ModelField({ draft, update }: { draft: AppSettings; update: UpdateFn }) {
+  const { toast } = useToast();
+  const provider = draft.summarization.model.provider;
+  const [models, setModels] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const prevProvider = useRef(provider);
+  const listId = "summarization-model-options";
+
+  const fetchModels = useCallback(
+    async (manual: boolean) => {
+      setLoading(true);
+      try {
+        const bridge = await getBridge();
+        const res = await bridge.listModels(provider);
+        setModels(res.models);
+        if (manual && res.error) toast(`Модели не загружены: ${res.error}`, "error");
+        else if (manual) toast(`Загружено моделей: ${res.models.length}`, "ok");
+      } catch (e) {
+        if (manual) toast(e instanceof Error ? e.message : "Не удалось получить список моделей", "error");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [provider, toast],
+  );
+
+  // Re-fetch silently when the provider changes (not on mount — avoids a surprise network call
+  // when the settings screen opens). Initial load is via the refresh button.
+  useEffect(() => {
+    if (prevProvider.current !== provider) {
+      prevProvider.current = provider;
+      setModels([]);
+      void fetchModels(false);
+    }
+  }, [provider, fetchModels]);
+
+  return (
+    <Field
+      label="Модель"
+      tooltip="Название модели у провайдера. Нажмите ⟳, чтобы подгрузить список актуальных моделей; можно ввести и вручную."
+    >
+      <div className="flex gap-2">
+        <Input
+          list={listId}
+          value={draft.summarization.model.name}
+          placeholder="выберите или введите модель"
+          onChange={(e) => update((d) => (d.summarization.model.name = e.target.value))}
+        />
+        <Button variant="secondary" size="sm" onClick={() => void fetchModels(true)} disabled={loading} title="Обновить список">
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+        </Button>
+      </div>
+      <datalist id={listId}>
+        {models.map((m) => (
+          <option key={m} value={m} />
+        ))}
+      </datalist>
+    </Field>
+  );
+}
+
 // ── sections ─────────────────────────────────────────────────────────────────
 
 function TranscriptionSection({ draft, update }: { draft: AppSettings; update: UpdateFn }) {
@@ -242,9 +306,7 @@ function SummarizationSection({ draft, update }: { draft: AppSettings; update: U
             onChange={(e) => update((d) => (d.summarization.model.provider = e.target.value as SummaryProvider))}
           />
         </Field>
-        <Field label="Модель" tooltip="Название модели у провайдера (напр. gpt-4o, llama3).">
-          <Input value={s.model.name} onChange={(e) => update((d) => (d.summarization.model.name = e.target.value))} />
-        </Field>
+        <ModelField draft={draft} update={update} />
         <Field
           label="Base URL"
           full

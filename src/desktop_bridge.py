@@ -273,6 +273,35 @@ def test_connection(provider: str) -> dict[str, Any]:
     return {"ok": True, "message": f"Локальный провайдер: {base_url}"}
 
 
+def list_models(provider: str) -> dict[str, Any]:
+    """Fetch the available model ids from the provider's OpenAI-compatible ``GET /v1/models``.
+
+    Unlike ``test_connection`` this makes a real (short-timeout) network call. Always returns
+    ``{"models": [...], "error": str | None}`` — never raises — so the UI can degrade to its
+    manual model input on any failure (offline, missing key, server down).
+    """
+    if provider not in PROVIDER_PRESETS:
+        return {"models": [], "error": f"Неизвестный провайдер: {provider}."}
+    settings = _load_settings()
+    saved = settings.summarization.model
+    # CODE-005: `provider` may be an unsaved UI draft — only trust the saved base_url when it
+    # belongs to the SAME provider, else use the preset (avoids querying the wrong endpoint).
+    base_url = saved.base_url if (saved.base_url and provider == saved.provider) else PROVIDER_PRESETS.get(provider)
+    api_key = secrets_store.get_api_key(provider)
+    if workflows.is_external_provider(base_url, provider) and not api_key:
+        return {"models": [], "error": "Для внешнего провайдера не сохранён ключ API."}
+
+    import openai  # noqa: PLC0415
+
+    client = openai.OpenAI(api_key=api_key or ("local" if base_url else None), base_url=base_url, timeout=10.0)
+    try:
+        resp = client.models.list()
+    except Exception as exc:  # noqa: BLE001 - boundary: network/HTTP errors → clean UI message
+        return {"models": [], "error": workflows.humanize_error(exc)}
+    models = sorted({m.id for m in resp.data if getattr(m, "id", None)})
+    return {"models": models, "error": None}
+
+
 # ── History ──────────────────────────────────────────────────────────────────
 
 
@@ -675,6 +704,8 @@ def main(argv: list[str] | None = None) -> int:
             out = delete_api_key(payload["provider"])
         elif command == "test_connection":
             out = test_connection(payload["provider"])
+        elif command == "list_models":
+            out = list_models(payload["provider"])
         elif command == "export_summary":
             out = export_summary(payload)
         elif command == "get_history":

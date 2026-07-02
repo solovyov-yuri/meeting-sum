@@ -24,6 +24,7 @@ export interface Bridge {
   setApiKey(provider: string, apiKey: string): Promise<void>;
   deleteApiKey(provider: string): Promise<void>;
   testConnection(provider: string): Promise<{ ok: boolean; message: string }>;
+  listModels(provider: string): Promise<{ models: string[]; error: string | null }>;
   getHistory(): Promise<HistoryItem[]>;
   deleteHistoryItem(id: string): Promise<void>;
   readText(path: string | null): Promise<{ text: string | null; exists: boolean }>;
@@ -49,6 +50,7 @@ async function tauriBridge(): Promise<Bridge> {
     setApiKey: (provider, apiKey) => invoke("set_api_key", { provider, apiKey }),
     deleteApiKey: (provider) => invoke("delete_api_key", { provider }),
     testConnection: (provider) => invoke("test_connection", { provider }),
+    listModels: (provider) => invoke("list_models", { provider }),
     getHistory: () => invoke<HistoryItem[]>("get_history"),
     deleteHistoryItem: (id) => invoke("delete_history_item", { id }),
     readText: (path) => invoke<{ text: string | null; exists: boolean }>("read_text", { path }),
@@ -206,6 +208,17 @@ function browserBridge(): Bridge {
     async testConnection() {
       await delay(500);
       return { ok: true, message: "Подключение успешно (демо-режим)." };
+    },
+    async listModels(provider) {
+      await delay(400);
+      const demo: Record<string, string[]> = {
+        openai: ["gpt-4o", "gpt-4o-mini", "o4-mini"],
+        xai: ["grok-4", "grok-3", "grok-3-mini"],
+        ollama: ["llama3.1", "qwen2.5", "gemma2"],
+        "lm-studio": ["local-model"],
+        vllm: ["local-model"],
+      };
+      return { models: demo[provider] ?? [], error: null };
     },
     async getHistory() {
       return structuredClone(history);

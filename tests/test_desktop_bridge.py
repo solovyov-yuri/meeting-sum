@@ -331,6 +331,62 @@ def test_test_connection_unknown_provider() -> None:
     assert res["ok"] is False
 
 
+# ── list_models ─────────────────────────────────────────────────────────────────
+
+
+def test_list_models_unknown_provider() -> None:
+    res = desktop_bridge.list_models("grok")
+    assert res["models"] == []
+    assert "провайдер" in res["error"].lower()
+
+
+def test_list_models_external_without_key(data_dir: Path) -> None:
+    # openai with no stored key must not attempt a network call — clean error, empty list.
+    res = desktop_bridge.list_models("openai")
+    assert res["models"] == []
+    assert "ключ" in res["error"].lower()
+
+
+def test_list_models_success_dedupes_and_sorts(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import openai
+
+    class _Model:
+        def __init__(self, id_: str) -> None:
+            self.id = id_
+
+    class _Resp:
+        data = [_Model("qwen2.5"), _Model("llama3.1"), _Model("llama3.1")]
+
+    class _Client:
+        def __init__(self, **_kw: object) -> None:
+            self.models = self
+
+        def list(self) -> _Resp:
+            return _Resp()
+
+    monkeypatch.setattr(openai, "OpenAI", _Client)
+    res = desktop_bridge.list_models("ollama")  # local provider → no key required
+    assert res["error"] is None
+    assert res["models"] == ["llama3.1", "qwen2.5"]
+
+
+def test_list_models_network_error_returns_clean(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import openai
+
+    class _Models:
+        def list(self) -> object:
+            raise ConnectionError("connection refused")
+
+    class _Client:
+        def __init__(self, **_kw: object) -> None:
+            self.models = _Models()
+
+    monkeypatch.setattr(openai, "OpenAI", _Client)
+    res = desktop_bridge.list_models("ollama")
+    assert res["models"] == []
+    assert res["error"]
+
+
 def test_test_connection_ignores_saved_base_url_for_other_provider(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

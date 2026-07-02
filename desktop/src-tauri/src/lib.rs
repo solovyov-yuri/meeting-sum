@@ -141,6 +141,14 @@ async fn test_connection(app: AppHandle, provider: String) -> Result<Value, Stri
 }
 
 #[tauri::command]
+async fn list_models(app: AppHandle, provider: String) -> Result<Value, String> {
+    let payload = json!({ "provider": provider });
+    tauri::async_runtime::spawn_blocking(move || run_bridge(&app, "list_models", payload))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn get_history(app: AppHandle) -> Result<Value, String> {
     let value = tauri::async_runtime::spawn_blocking(move || run_bridge(&app, "get_history", json!({})))
         .await
@@ -466,6 +474,7 @@ pub fn run() {
             set_api_key,
             delete_api_key,
             test_connection,
+            list_models,
             get_history,
             delete_history_item,
             export_summary,
