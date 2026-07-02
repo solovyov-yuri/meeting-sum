@@ -29,7 +29,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _LOCAL_HOSTNAMES = {"localhost", "127.0.0.1", "::1"}
-_AUDIO_EXTENSIONS = frozenset({".wav", ".mp3", ".m4a", ".ogg"})
+# Single source of truth for accepted audio/video containers (imported by cli.py and mirrored
+# in desktop/src/lib/bridge.ts). ffmpeg/faster-whisper handle all of these.
+AUDIO_EXTENSIONS = frozenset({".wav", ".mp3", ".m4a", ".ogg", ".mp4", ".mkv", ".webm", ".flac"})
 
 # ── Steps / statuses (kept in sync with docs/desktop-bridge-contract.md) ─────────
 STEP_PREPROCESS = "preprocess"
@@ -212,8 +214,8 @@ def run_one_file(
     # ── Input validation ────────────────────────────────────────────────────────
     if not audio_path.exists():
         return failed(STEP_PREPROCESS, f"Аудиофайл не найден: {audio_path}")
-    if audio_path.suffix.lower() not in _AUDIO_EXTENSIONS:
-        supported = ", ".join(sorted(ext.lstrip(".").upper() for ext in _AUDIO_EXTENSIONS))
+    if audio_path.suffix.lower() not in AUDIO_EXTENSIONS:
+        supported = ", ".join(sorted(ext.lstrip(".").upper() for ext in AUDIO_EXTENSIONS))
         return failed(STEP_PREPROCESS, f"Неподдерживаемый формат аудио: {audio_path.suffix}. Поддерживаются: {supported}.")
 
     # Validate provider/mode/language early (raises ValueError → user-facing message).
@@ -384,7 +386,7 @@ def resummarize_one(
 
     try:
         transcript = Transcript.from_file(transcript_path)
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         msg = f"Не удалось прочитать транскрипт: {exc}"
         emit(ProgressEvent(STEP_SUMMARIZE, "error", msg))
         return RunResult("failed", transcript_path, None, None, None, None, msg)

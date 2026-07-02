@@ -164,6 +164,22 @@ def test_run_one_file_unsupported_extension(tmp_path: Path) -> None:
     assert "формат" in result.error_message.lower()
 
 
+def test_run_one_file_accepts_mp4(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # REL-004: .mp4 is the user's real recording format — it must pass the extension gate.
+    mp4 = tmp_path / "meeting.mp4"
+    mp4.write_bytes(b"\x00" * 32)
+    tr = Transcript(segments=(Segment(0.0, 1.0, "обсудили план"),))
+    _patch_providers(monkeypatch, tr, FakeSummarizer())
+    options = RunOptions(
+        audio_path=mp4,
+        transcript_path=tmp_path / "tr.txt",
+        summary_path=tmp_path / "sum.txt",
+        provider="ollama",
+    )
+    result = run_one_file(options, settings=Settings())
+    assert result.status == "success"
+
+
 def test_run_one_file_cancel_before_transcribe(
     tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -218,6 +234,34 @@ def test_resummarize_one_uses_existing_transcript(
     assert (tmp_path / "sum.txt").exists()
     assert (tmp_path / "sum.json").exists()
     assert "резюме" in result.summary_text
+
+
+def test_resummarize_one_non_utf8_transcript_fails_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # REL-001: a cp1251-encoded transcript must yield a friendly failure, not a raw
+    # UnicodeDecodeError traceback (it subclasses ValueError, so plain `except OSError` misses it).
+    transcript_path = tmp_path / "tr.txt"
+    transcript_path.write_bytes("[0.00s -> 1.00s] обсудили план\n".encode("cp1251"))
+
+    import providers.factory as factory_mod
+
+    monkeypatch.setattr(factory_mod, "make_transcriber", _exploding_transcriber)
+    monkeypatch.setattr(
+        factory_mod,
+        "make_summarizer",
+        lambda settings, provider, mode, model_override=None, summary_language=None: FakeSummarizer(),
+    )
+
+    options = RunOptions(
+        audio_path=tmp_path / "meeting.wav",
+        transcript_path=transcript_path,
+        summary_path=tmp_path / "sum.txt",
+        provider="ollama",
+    )
+    result = workflows.resummarize_one(options, settings=Settings())
+    assert result.status == "failed"
+    assert "прочитать транскрипт" in result.error_message.lower()
 
 
 def test_resummarize_one_missing_transcript(tmp_path: Path) -> None:

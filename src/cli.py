@@ -22,9 +22,6 @@ def _configure_logging(verbose: bool) -> None:
     )
 
 
-_AUDIO_EXTENSIONS = frozenset({".wav", ".mp3", ".m4a", ".ogg"})
-
-
 def _is_external(base_url: str | None, provider: str) -> bool:
     from workflows import is_external_provider  # noqa: PLC0415
 
@@ -114,7 +111,9 @@ def batch(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
-    audio_files = sorted(p for p in folder.iterdir() if p.suffix.lower() in _AUDIO_EXTENSIONS)
+    from workflows import AUDIO_EXTENSIONS  # noqa: PLC0415
+
+    audio_files = sorted(p for p in folder.iterdir() if p.suffix.lower() in AUDIO_EXTENSIONS)
 
     if not audio_files:
         typer.echo(f"No audio files found in {folder}.")
@@ -318,7 +317,7 @@ def summarize(
 
     try:
         tr = Transcript.from_file(transcript_path)
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         typer.echo(f"Error reading transcript: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 

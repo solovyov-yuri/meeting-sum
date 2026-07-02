@@ -59,6 +59,16 @@ def test_summarize_unknown_mode(tmp_path: Path) -> None:
     assert "mode" in result.output.lower()
 
 
+def test_summarize_non_utf8_transcript(tmp_path: Path) -> None:
+    # REL-001: a cp1251-encoded transcript must fail cleanly (exit 1), not dump a
+    # UnicodeDecodeError traceback past the error boundary.
+    transcript = tmp_path / "t.txt"
+    transcript.write_bytes("[00:00] привет\n".encode("cp1251"))
+    result = runner.invoke(app, ["summarize", str(transcript), "-p", "ollama"])
+    assert result.exit_code == 1
+    assert "error reading transcript" in result.output.lower()
+
+
 def test_help_does_not_load_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = tmp_path / "config.yaml"
     cfg.write_text("summarization:\n  model:\n    provider: bad-provider\n", encoding="utf-8")

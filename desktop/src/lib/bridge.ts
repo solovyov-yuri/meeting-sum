@@ -74,7 +74,8 @@ async function tauriBridge(): Promise<Bridge> {
       const selected = await dialog.open({
         multiple: false,
         directory: false,
-        filters: [{ name: "Аудио", extensions: ["wav", "mp3", "m4a", "ogg"] }],
+        // Kept in sync with AUDIO_EXTENSIONS in src/workflows.py
+        filters: [{ name: "Аудио/видео", extensions: ["wav", "mp3", "m4a", "ogg", "mp4", "mkv", "webm", "flac"] }],
       });
       return typeof selected === "string" ? selected : null;
     },
