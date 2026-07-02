@@ -64,6 +64,19 @@ SUMMARY_PROMPT_DETAILED_RU = """\
 {transcript}
 </transcript>"""
 
+SUMMARY_PROMPT_LECTURE_RU = """\
+Составь конспект лекции или доклада по транскрипции ниже. Это не протокол встречи, а учебный конспект: последовательно и структурированно изложи материал так, чтобы по нему можно было учиться.
+
+Выведи только текст конспекта — без вводных фраз и предложений продолжить. Правила:
+- Раздели материал на разделы по смысловым блокам; каждый раздел начни с подзаголовка «*Название раздела*».
+- Внутри раздела — короткие тезисы списком: определения, факты, формулы, примеры, выводы.
+- Сохраняй важные термины, определения и числа точно; не добавляй того, чего не было в тексте.
+- В конце добавь раздел «*Главное*» — 3–5 ключевых выводов одной строкой каждый.
+
+<transcript>
+{transcript}
+</transcript>"""
+
 CHUNK_PROMPT_RU = """\
 Это фрагмент длинной транскрипции встречи. Кратко выдели ключевые обсуждения, решения и задачи из этого фрагмента. Выводи только список пунктов — без вводных фраз, без структуры.
 
@@ -77,6 +90,7 @@ PROMPTS: dict[str, dict[str, tuple[str, str]]] = {
         "brief": (SYSTEM_PROMPT_RU, SUMMARY_PROMPT_BRIEF_RU),
         "medium": (SYSTEM_PROMPT_RU, SUMMARY_PROMPT_MEDIUM_RU),
         "detailed": (SYSTEM_PROMPT_RU, SUMMARY_PROMPT_DETAILED_RU),
+        "lecture": (SYSTEM_PROMPT_RU, SUMMARY_PROMPT_LECTURE_RU),
     },
 }
 
@@ -89,7 +103,7 @@ CHUNK_PROMPTS: dict[str, tuple[str, str]] = {
 CHUNK_PROMPT: tuple[str, str] = CHUNK_PROMPTS["ru"]
 
 # Flat set of supported modes (language-independent for config validation).
-SUMMARY_MODES: frozenset[str] = frozenset({"brief", "medium", "detailed"})
+SUMMARY_MODES: frozenset[str] = frozenset({"brief", "medium", "detailed", "lecture"})
 
 
 def get_prompt(language: str, mode: str) -> tuple[str, str]:

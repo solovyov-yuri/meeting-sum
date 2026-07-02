@@ -8,7 +8,12 @@ import { dirName, fileName, stem } from "@/lib/utils";
 import type { Phase, RunConfig } from "@/hooks/useRecap";
 
 const LANG_LABELS: Record<string, string> = { ru: "Русский", en: "English", auto: "Авто" };
-const MODE_LABELS: Record<SummaryMode, string> = { brief: "краткий", medium: "средний", detailed: "подробный" };
+const MODE_LABELS: Record<SummaryMode, string> = {
+  brief: "краткий",
+  medium: "средний",
+  detailed: "подробный",
+  lecture: "конспект",
+};
 const RUN_MODE_LABELS: Record<RunMode, string> = {
   full: "Полный",
   preprocess: "Подготовка",

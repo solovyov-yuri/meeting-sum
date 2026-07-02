@@ -19,11 +19,11 @@ def test_prompts_has_ru_language() -> None:
 
 
 def test_prompts_ru_has_all_modes() -> None:
-    assert set(PROMPTS["ru"]) == {"brief", "medium", "detailed"}
+    assert set(PROMPTS["ru"]) == {"brief", "medium", "detailed", "lecture"}
 
 
 def test_summary_modes_constant() -> None:
-    assert SUMMARY_MODES == {"brief", "medium", "detailed"}
+    assert SUMMARY_MODES == {"brief", "medium", "detailed", "lecture"}
 
 
 def test_all_prompts_contain_placeholder() -> None:

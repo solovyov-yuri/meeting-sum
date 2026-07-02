@@ -1,6 +1,6 @@
 // Types mirroring docs/desktop-bridge-contract.md. Kept in sync with src/desktop_bridge.py.
 
-export type SummaryMode = "brief" | "medium" | "detailed";
+export type SummaryMode = "brief" | "medium" | "detailed" | "lecture";
 /** Which slice of the pipeline a run executes (distinct from SummaryMode). */
 export type RunMode = "full" | "preprocess" | "transcribe" | "summarize";
 export type ChunkingMode = "chunk" | "truncate";

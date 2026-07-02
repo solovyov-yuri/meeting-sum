@@ -378,14 +378,18 @@ function SummarizationSection({ draft, update }: { draft: AppSettings; update: U
             onChange={(e) => update((d) => (d.summarization.language = e.target.value))}
           />
         </Field>
-        <Field label="Режим" tooltip="Объём саммари: краткий, средний или подробный протокол.">
+        <Field
+          label="Режим"
+          tooltip="Что делать из транскрипта: краткое/среднее/подробное саммари встречи или конспект — для лекций и докладов."
+        >
           <Segmented<SummaryMode>
             value={s.mode}
             onChange={(mode) => update((d) => (d.summarization.mode = mode))}
             options={[
-              { value: "brief", label: "brief" },
-              { value: "medium", label: "medium" },
-              { value: "detailed", label: "detailed" },
+              { value: "brief", label: "краткое" },
+              { value: "medium", label: "среднее" },
+              { value: "detailed", label: "подробное" },
+              { value: "lecture", label: "конспект" },
             ]}
           />
         </Field>

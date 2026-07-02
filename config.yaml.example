@@ -29,7 +29,7 @@ transcription:
 
 summarization:
   # language: ru               # language for LLM prompts; defaults to ru regardless of transcription.language
-  mode: medium                 # brief | medium | detailed
+  mode: medium                 # brief | medium | detailed | lecture
   max_transcript_chars: 42000  # per-request limit; long transcripts are split into chunks (chunking_mode: chunk)
   timeout_seconds: 60          # seconds to wait for an LLM response before giving up
   retries: 2                   # retries on timeout/connection errors (0 = no retries)
