@@ -251,6 +251,52 @@ def test_get_history_empty_when_no_file() -> None:
     assert desktop_bridge.get_history() == {"items": []}
 
 
+def test_serve_reuses_transcriber_across_runs(
+    tmp_path: Path, data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # PERF-001: the persistent worker builds the Whisper model once and reuses it for a second run.
+    import logging
+
+    import providers.factory as factory_mod
+
+    calls = {"n": 0}
+
+    def counting_make_transcriber(settings: object) -> FakeTranscriber:
+        calls["n"] += 1
+        return FakeTranscriber()
+
+    monkeypatch.setattr(factory_mod, "make_transcriber", counting_make_transcriber)
+    monkeypatch.setattr(
+        factory_mod,
+        "make_summarizer",
+        lambda settings, provider, mode, model_override=None, summary_language=None: FakeSummarizer(),
+    )
+
+    def make_req(i: int) -> str:
+        audio = tmp_path / f"m{i}.wav"
+        audio.write_bytes(b"RIFF" + b"\x00" * 32)
+        return json.dumps(
+            {
+                "audio_path": str(audio),
+                "transcript_path": str(tmp_path / f"tr{i}.txt"),
+                "summary_path": str(tmp_path / f"sum{i}.txt"),
+                "overrides": {"provider": "ollama", "mode": "medium"},
+            }
+        )
+
+    saved = logging.getLogger().handlers[:]
+    try:
+        rc = desktop_bridge.serve([make_req(1), make_req(2)])
+    finally:
+        root = logging.getLogger()
+        root.handlers.clear()
+        root.handlers.extend(saved)
+
+    assert rc == 0
+    assert calls["n"] == 1  # model built once, reused for the second run
+    assert len(desktop_bridge.get_history()["items"]) == 2  # both runs completed + recorded
+
+
 def test_history_append_delete_under_lock(data_dir: Path) -> None:
     # REL-006: append/delete run under a cross-process file lock; sequential ops must still
     # round-trip correctly (and the lock must be re-acquirable across calls).

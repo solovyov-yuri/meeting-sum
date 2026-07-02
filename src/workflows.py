@@ -25,7 +25,13 @@ from config import Settings
 
 if TYPE_CHECKING:
     from providers.llm import LLMSummarizer
+    from providers.whisper import WhisperTranscriber
     from transcript import Transcript
+
+# Builds (or returns a cached) transcriber for the given settings. The desktop worker passes a
+# caching factory here so the Whisper model stays warm across runs (PERF-001); everyone else
+# gets the default make_transcriber (a fresh model per call).
+TranscriberFactory = Callable[[Settings], "WhisperTranscriber"]
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +136,7 @@ def run_one_file(
     settings: Settings | None = None,
     progress: ProgressCallback | None = None,
     cancel: CancelCheck | None = None,
+    transcriber_factory: TranscriberFactory | None = None,
 ) -> RunResult:
     """Run the full one-file pipeline and return a structured result.
 
@@ -186,8 +193,9 @@ def run_one_file(
         return RunResult("cancelled", None, None, None, None, None, "Остановлено пользователем.")
 
     # ── Transcribe (preprocess inside) ────────────────────────────────────────────
+    build_transcriber = transcriber_factory or make_transcriber
     try:
-        transcriber = make_transcriber(settings)
+        transcriber = build_transcriber(settings)
     except Exception as exc:
         logger.exception("Failed to load transcription model")
         return failed(STEP_TRANSCRIBE, f"Не удалось загрузить модель распознавания: {humanize_error(exc)}")

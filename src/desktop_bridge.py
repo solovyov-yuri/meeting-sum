@@ -19,10 +19,13 @@ import logging
 import os
 import sys
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from providers.whisper import WhisperTranscriber
 
 import secrets_store
 import workflows
@@ -484,11 +487,13 @@ def run_recap(
     *,
     emit: workflows.ProgressCallback | None = None,
     cancel: workflows.CancelCheck | None = None,
+    transcriber_factory: workflows.TranscriberFactory | None = None,
 ) -> workflows.RunResult:
     """Run one file and record a history entry. Returns the structured result.
 
     ``emit`` receives every progress event; the history entry stores only paths/metadata
-    (never the transcript or summary text).
+    (never the transcript or summary text). ``transcriber_factory`` lets the persistent worker
+    (``serve``) reuse a warm Whisper model across runs (PERF-001); when None a fresh model is built.
     """
     options = _build_run_options(payload)
     settings = _load_settings()
@@ -497,7 +502,9 @@ def run_recap(
 
     _maybe_emit_privacy_warning(settings, provider, emit)
 
-    result = workflows.run_one_file(options, settings=settings, progress=emit, cancel=cancel)
+    result = workflows.run_one_file(
+        options, settings=settings, progress=emit, cancel=cancel, transcriber_factory=transcriber_factory
+    )
     _record_history(options, provider, settings, result)
     return result
 
@@ -584,6 +591,59 @@ def _streaming(command: str, payload: dict[str, Any]) -> int:
     return 0
 
 
+def _transcriber_key(settings: Settings) -> tuple[Any, ...]:
+    """Cache key for the transcriber — only the fields that change the loaded model."""
+    m = settings.transcription.model
+    return (m.provider, m.name, m.device, m.compute_type, m.beam_size, m.vad_filter, m.condition_on_previous_text)
+
+
+def serve(lines: Iterable[str] | None = None) -> int:
+    """Persistent worker (PERF-001): keep the Whisper model warm across ``run_recap`` requests.
+
+    Reads one JSON run-request per line from stdin and streams, per run, the same framing as
+    ``_streaming``: ``{"type":"progress"}`` events then a terminal ``{"type":"result"}`` /
+    ``{"type":"error"}`` line (the Rust host reads until that terminal line and keeps the pipe
+    open). Only ``run_recap`` is served here — ``resummarize`` is LLM-only and stays spawn-per-call.
+
+    At most one transcriber is cached; a change to the transcription model drops the old one
+    (freeing GPU memory) before building the new.
+    """
+    _configure_logging()
+    cache: dict[tuple[Any, ...], WhisperTranscriber] = {}
+
+    def factory(settings: Settings) -> WhisperTranscriber:
+        key = _transcriber_key(settings)
+        if key not in cache:
+            cache.clear()  # release the previous model before building a new one
+            from providers.factory import make_transcriber  # noqa: PLC0415
+
+            cache[key] = make_transcriber(settings)
+        return cache[key]
+
+    def emit(event: workflows.ProgressEvent) -> None:
+        _emit_line({"type": "progress", "event": _event_to_dict(event)})
+
+    for raw in lines if lines is not None else sys.stdin:
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            _emit_line({"type": "error", "error": f"Некорректный JSON: {exc}"})
+            continue
+        cancel_flag = payload.pop("cancel_flag", None)
+        cancel: workflows.CancelCheck | None = Path(cancel_flag).exists if cancel_flag else None
+        try:
+            result = run_recap(payload, emit=emit, cancel=cancel, transcriber_factory=factory)
+        except Exception as exc:  # noqa: BLE001 - boundary: report, never crash the worker
+            logger.exception("serve run failed")
+            _emit_line({"type": "error", "error": workflows.humanize_error(exc)})
+            continue
+        _emit_line({"type": "result", "result": _result_to_dict(result)})
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     _configure_logging()
     args = sys.argv[1:] if argv is None else argv
@@ -592,6 +652,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     command = args[0]
+    if command == "serve":  # persistent worker: reads many requests, not a single payload
+        return serve()
+
     raw = sys.stdin.read()
     try:
         payload = json.loads(raw) if raw.strip() else {}
