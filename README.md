@@ -19,7 +19,7 @@ cd recap
 uv sync
 ```
 
-NVIDIA CUDA-библиотеки (cublas, cudnn) устанавливаются как Python-пакеты внутри venv — дополнительной системной установки не нужно.
+NVIDIA CUDA-библиотеки (cublas, cudnn) устанавливаются как Python-пакеты внутри venv — дополнительной системной установки не нужно. Они помечены `sys_platform != 'darwin'`, поэтому на **macOS** (где этих wheels нет) `uv sync` не падает; транскрибация там идёт на CPU (`transcription.model.device: cpu`).
 
 ## Конфигурация
 
