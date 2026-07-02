@@ -476,3 +476,118 @@ def test_truncate_mode_does_not_chunk(monkeypatch: pytest.MonkeyPatch) -> None:
     summarizer.summarize(long_text)
 
     assert call_count[0] == 1  # only one call — no chunking
+
+
+# ── Parallel chunk summarization (PERF-002) ─────────────────────────────────────
+
+
+def test_is_local_gate() -> None:
+    assert LLMSummarizer(model="t")._is_local() is False  # None → external (OpenAI)
+    assert LLMSummarizer(model="t", base_url="http://localhost:11434/v1")._is_local() is True
+    assert LLMSummarizer(model="t", base_url="http://127.0.0.1:1234/v1")._is_local() is True
+    assert LLMSummarizer(model="t", base_url="http://[::1]:11434/v1")._is_local() is True
+    assert LLMSummarizer(model="t", base_url="https://api.openai.com/v1")._is_local() is False
+    assert LLMSummarizer(model="t", base_url="https://api.x.ai/v1")._is_local() is False
+
+
+def _make_content_keyed_openai(call_messages: list[list[dict]]):
+    """Fake openai client whose response marker is derived from the request content.
+
+    The marker travels with the chunk content (not a call counter), so ordering
+    assertions hold even when chunks complete out of order under concurrency.
+    """
+
+    class FakeChunk:
+        def __init__(self, text: str) -> None:
+            self.choices = [type("C", (), {"delta": type("D", (), {"content": text})()})()]
+
+    class FakeStream:
+        def __init__(self, text: str) -> None:
+            self._text = text
+
+        def __enter__(self) -> "FakeStream":
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            pass
+
+        def __iter__(self):
+            yield FakeChunk(self._text)
+
+    class FakeCompletions:
+        def create(self, model: str, messages: list, stream: bool, **kw) -> FakeStream:
+            call_messages.append(messages)
+            user = messages[1]["content"]
+            # Derive a stable marker from the chunk's own content.
+            marker = "MERGE"
+            for tag in ("AAA", "BBB", "CCC"):
+                if tag in user:
+                    marker = f"sum-{tag}"
+                    break
+            return FakeStream(marker)
+
+    class FakeChat:
+        completions = FakeCompletions()
+
+    class FakeClient:
+        chat = FakeChat()
+
+    return lambda **kw: FakeClient()
+
+
+def test_external_provider_chunks_summarized_in_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    """External provider parallelizes chunks but keeps them in chunk order."""
+    call_messages: list[list[dict]] = []
+    monkeypatch.setattr("openai.OpenAI", _make_content_keyed_openai(call_messages))
+
+    max_chars = 65  # each 36-char line → own chunk; 55-char merge fits in one call
+    line_a = "AAA" * 12  # 36 chars
+    line_b = "BBB" * 12
+    line_c = "CCC" * 12
+    long_text = f"{line_a}\n{line_b}\n{line_c}"  # 3 chunks
+
+    summarizer = LLMSummarizer(
+        model="test",
+        base_url="https://api.openai.com/v1",  # external → parallel
+        max_chars=max_chars,
+        chunking_mode="chunk",
+    )
+    summarizer.summarize(long_text)
+
+    merge_user = call_messages[-1][1]["content"]
+    assert "[Часть 1]\nsum-AAA" in merge_user
+    assert "[Часть 2]\nsum-BBB" in merge_user
+    assert "[Часть 3]\nsum-CCC" in merge_user
+    # The labelled blocks appear in ascending chunk order.
+    assert (
+        merge_user.index("[Часть 1]") < merge_user.index("[Часть 2]") < merge_user.index("[Часть 3]")
+    )
+
+
+def test_local_provider_chunks_summarized_in_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A local base_url stays sequential and still produces correct ordering."""
+    call_messages: list[list[dict]] = []
+    monkeypatch.setattr("openai.OpenAI", _make_content_keyed_openai(call_messages))
+
+    def _no_executor(*a, **k):
+        raise AssertionError("local provider must not use ThreadPoolExecutor")
+
+    monkeypatch.setattr("providers.llm.ThreadPoolExecutor", _no_executor)
+
+    max_chars = 50
+    line_a = "AAA" * 12
+    line_b = "BBB" * 12
+    long_text = f"{line_a}\n{line_b}"  # 2 chunks
+
+    summarizer = LLMSummarizer(
+        model="test",
+        base_url="http://localhost:11434/v1",  # local → sequential
+        max_chars=max_chars,
+        chunking_mode="chunk",
+    )
+    summarizer.summarize(long_text)
+
+    merge_user = call_messages[-1][1]["content"]
+    assert "[Часть 1]\nsum-AAA" in merge_user
+    assert "[Часть 2]\nsum-BBB" in merge_user
+    assert merge_user.index("[Часть 1]") < merge_user.index("[Часть 2]")

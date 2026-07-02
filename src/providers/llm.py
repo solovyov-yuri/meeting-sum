@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlparse
 
 from prompts import CHUNK_PROMPTS, PROMPTS, SUMMARY_PROMPT_MEDIUM_RU  # noqa: F401 — re-exported for consumers
 
@@ -143,17 +145,38 @@ class LLMSummarizer:
         return chunks
 
     _MAX_MERGE_DEPTH = 3
+    _MAX_CHUNK_WORKERS = 3
+
+    def _is_local(self) -> bool:
+        """True when the endpoint targets a local host (Ollama/lm-studio/vllm).
+
+        Local servers are resource-starved by concurrent requests, so per-chunk
+        summarization stays sequential for them. `None` (OpenAI default) is external.
+        """
+        if self._base_url is None:
+            return False
+        return urlparse(self._base_url).hostname in {"localhost", "127.0.0.1", "::1"}
+
+    def _summarize_one_chunk(self, indexed_chunk: tuple[int, str], client, console) -> str:
+        i, chunk = indexed_chunk
+        logger.info("Summarizing chunk %d…", i)
+        messages = self._build_messages(chunk, prompt_template=self._chunk_prompt)
+        return f"[Часть {i}]\n{self._call_llm(messages, client, console)}"
 
     def _chunked_summarize(self, transcript_text: str, client, console, _depth: int = 0) -> str:
         chunks = self._split_into_chunks(transcript_text)
         logger.info("Transcript split into %d chunks for summarization.", len(chunks))
 
-        chunk_summaries: list[str] = []
-        for i, chunk in enumerate(chunks, 1):
-            logger.info("Summarizing chunk %d/%d…", i, len(chunks))
-            messages = self._build_messages(chunk, prompt_template=self._chunk_prompt)
-            summary = self._call_llm(messages, client, console)
-            chunk_summaries.append(f"[Часть {i}]\n{summary}")
+        indexed = list(enumerate(chunks, 1))
+        if self._is_local() or len(chunks) < 2:
+            # Sequential: local servers are resource-starved by concurrency.
+            chunk_summaries = [self._summarize_one_chunk(ic, client, console) for ic in indexed]
+        else:
+            # External providers tolerate concurrency; executor.map preserves input order.
+            with ThreadPoolExecutor(max_workers=self._MAX_CHUNK_WORKERS) as executor:
+                chunk_summaries = list(
+                    executor.map(lambda ic: self._summarize_one_chunk(ic, client, console), indexed)
+                )
 
         merged = "\n\n".join(chunk_summaries)
         logger.info("Merging %d chunk summaries into final summary.", len(chunks))
