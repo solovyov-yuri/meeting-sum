@@ -63,9 +63,18 @@ class LLMSummarizer:
         """Make one streaming LLM call with retry. Returns the full response string."""
         import time  # noqa: PLC0415
 
+        import httpx  # noqa: PLC0415
         import openai  # noqa: PLC0415
 
-        _RETRYABLE = (openai.APITimeoutError, openai.APIConnectionError, openai.InternalServerError)
+        # httpx.HTTPError covers network errors raised while iterating the SSE stream,
+        # which some openai-python versions surface as httpx.ReadError / httpx.RemoteProtocolError
+        # instead of wrapping them in openai.APIConnectionError.
+        _RETRYABLE = (
+            openai.APITimeoutError,
+            openai.APIConnectionError,
+            openai.InternalServerError,
+            httpx.HTTPError,
+        )
         last_exc: Exception | None = None
         for attempt in range(self._max_retries + 1):
             if attempt > 0:

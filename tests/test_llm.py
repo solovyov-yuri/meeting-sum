@@ -255,6 +255,59 @@ def test_retry_succeeds_on_second_attempt(monkeypatch: pytest.MonkeyPatch) -> No
     assert call_count[0] == 2
 
 
+def test_retry_on_httpx_error_mid_stream(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A network error raised while iterating the SSE stream is retryable, not fatal."""
+    import httpx
+
+    call_count = [0]
+
+    class FailingStream:
+        def __enter__(self) -> "FailingStream":
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            pass
+
+        def __iter__(self):
+            yield type("C", (), {"choices": [type("C", (), {"delta": type("D", (), {"content": "partial"})()})()]})()
+            raise httpx.ReadError("connection reset mid-stream")
+
+    class OkChunk:
+        choices = [type("C", (), {"delta": type("D", (), {"content": "result"})()})()]
+
+    class OkStream:
+        def __enter__(self) -> "OkStream":
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            pass
+
+        def __iter__(self):
+            yield OkChunk()
+
+    class FakeCompletions:
+        def create(self, **kw):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return FailingStream()
+            return OkStream()
+
+    class FakeChat:
+        completions = FakeCompletions()
+
+    class FakeClient:
+        chat = FakeChat()
+
+    monkeypatch.setattr("openai.OpenAI", lambda **kw: FakeClient())
+    monkeypatch.setattr("time.sleep", lambda _: None)
+
+    summarizer = LLMSummarizer(model="test", base_url="http://localhost:1234/v1", max_retries=1, retry_backoff=0)
+    result = summarizer.summarize("content")
+
+    assert result == "result"
+    assert call_count[0] == 2
+
+
 def test_retry_exhausted_raises_last_error(monkeypatch: pytest.MonkeyPatch) -> None:
     import openai
 
