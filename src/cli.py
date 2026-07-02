@@ -54,7 +54,11 @@ def _ensure_output(path: Path) -> None:
         typer.echo(f"Error: output path is a directory: {path}", err=True)
         raise typer.Exit(code=1)
     if not path.parent.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            typer.echo(f"Error creating output directory {path.parent}: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
         logger.info("Created output directory: %s", path.parent)
 
 

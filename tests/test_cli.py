@@ -650,6 +650,22 @@ def test_preprocess_ffmpeg_error_exits_with_message(
     assert "codec not found" in result.output
 
 
+def test_transcribe_output_dir_uncreatable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # REL-008: a failing mkdir of the output directory must fail cleanly (exit 1),
+    # not dump an OSError traceback past the error boundary.
+    audio = tmp_path / "test.wav"
+    audio.write_bytes(b"\x00" * 16)
+    output = tmp_path / "forbidden" / "out.txt"
+
+    def bad_mkdir(self: Path, *args: object, **kwargs: object) -> None:
+        raise OSError("Permission denied")
+
+    monkeypatch.setattr(Path, "mkdir", bad_mkdir)
+    result = runner.invoke(app, ["transcribe", str(audio), "-o", str(output)])
+    assert result.exit_code == 1
+    assert "Error creating output directory" in result.output
+
+
 def test_transcribe_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     audio = tmp_path / "rec.wav"
     audio.write_bytes(b"\x00" * 16)
