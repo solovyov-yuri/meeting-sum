@@ -263,6 +263,16 @@ preprocessing:
 
 Переменные среды: `RECAP_PREPROCESSING_ENABLED`, `RECAP_PREPROCESSING_SAMPLE_RATE`, `RECAP_PREPROCESSING_CHANNELS`, `RECAP_PREPROCESSING_CODEC`, `RECAP_PREPROCESSING_LOUDNESS_NORMALIZATION`, `RECAP_PREPROCESSING_TARGET_LUFS`, `RECAP_PREPROCESSING_TRUE_PEAK_DB`, `RECAP_PREPROCESSING_LOUDNESS_RANGE`, `RECAP_PREPROCESSING_HIGHPASS_HZ`, `RECAP_PREPROCESSING_KEEP_TEMP`.
 
+## Десктоп-приложение
+
+Кроме CLI, в репозитории есть десктоп-приложение (Tauri 2 + React) поверх того же Python-пайплайна.
+Rust-слой запускает второй entry point — `recap-bridge` (`pyproject.toml`), — а вся логика остаётся
+в `src/` и покрыта тестами. UI можно демонстрировать в браузере без Rust/GPU (встроенный mock-мост).
+
+- Разработка фронтенда и запуск реального приложения: [`desktop/README.md`](desktop/README.md).
+- Архитектура, контракт моста и спека: [`docs/desktop-tauri-spec.md`](docs/desktop-tauri-spec.md),
+  [`docs/desktop-bridge-contract.md`](docs/desktop-bridge-contract.md).
+
 ## Telegram Markdown
 
 Саммари форматируется в **Telegram Markdown v1** (`parse_mode="Markdown"`):
