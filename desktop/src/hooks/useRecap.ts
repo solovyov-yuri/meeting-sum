@@ -158,13 +158,17 @@ export function useRecap() {
 
     const dir = dirName(audioPath);
     const base = stem(audioPath);
+    // Honor the user-configured output paths from the "Пути" settings screen.
+    // Fall back to audio-derived defaults only when a setting is empty/unset.
+    const transcriptPath = settings.transcript.trim() || `${dir}/${base}.txt`;
+    const summaryPath = settings.summary.trim() || `${dir}/${base}_summary.txt`;
     const bridge = await getBridge();
     try {
       const res = await bridge.runRecap(
         {
           audio_path: audioPath,
-          transcript_path: `${dir}/${base}.txt`,
-          summary_path: `${dir}/${base}_summary.txt`,
+          transcript_path: transcriptPath,
+          summary_path: summaryPath,
           output_formats: ["telegram", "json"],
           overrides: {
             provider: overrides.provider,
