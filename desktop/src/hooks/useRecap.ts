@@ -309,6 +309,7 @@ export function useRecap() {
       transcript_text: transcript.text,
       summary_text: summary.text,
       error_message: item.error_message,
+      output_path: item.output_path ?? null,
     };
     setResult(res);
     setEditedSummary(summary.text ?? "");

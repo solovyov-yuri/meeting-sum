@@ -180,9 +180,11 @@ function browserBridge(): Bridge {
       {
         id: crypto.randomUUID(),
         created_at: new Date().toISOString(),
+        run_mode: req.run_mode ?? "full",
         audio_path: req.audio_path ?? req.transcript_path ?? "",
         audio_name: name,
         status: result.status,
+        output_path: result.output_path ?? null,
         transcript_path: result.transcript_path,
         summary_path: result.summary_path,
         summary_json_path: result.summary_json_path,
@@ -257,8 +259,29 @@ function browserBridge(): Bridge {
       const src = req.audio_path ?? "input";
       const name = src.split(/[\\/]/).pop() ?? src;
       const emit = (e: ProgressEvent) => onProgress(e);
+      const runMode = req.run_mode ?? "full";
 
-      if (settings.preprocessing.enabled) {
+      if (runMode === "preprocess") {
+        emit({ step: "preprocess", status: "running", message: "Предобработка аудио…", percent: null, path: null });
+        await delay(500);
+        const outPath = `${(req.audio_path ?? "C:/recap/input").replace(/\.[^./\\]+$/, "")}.preprocessed.wav`;
+        emit({ step: "preprocess", status: "success", message: `Готово: ${outPath}`, percent: null, path: outPath });
+        const result: RunResult = {
+          status: "success",
+          transcript_path: null,
+          summary_path: null,
+          summary_json_path: null,
+          transcript_text: null,
+          summary_text: null,
+          error_message: null,
+          output_path: outPath,
+        };
+        pushHistory(req, result, provider, name);
+        return result;
+      }
+
+      // Full mode force-preprocesses; transcribe respects the toggle.
+      if (runMode === "full" || settings.preprocessing.enabled) {
         emit({ step: "preprocess", status: "running", message: "Предобработка аудио…", percent: null, path: null });
         await delay(400);
         emit({ step: "preprocess", status: "success", message: "Аудио подготовлено.", percent: null, path: null });
@@ -278,6 +301,21 @@ function browserBridge(): Bridge {
         path: transcriptPath,
       });
       files[transcriptPath] = MOCK_TRANSCRIPT;
+
+      if (runMode === "transcribe") {
+        const result: RunResult = {
+          status: "success",
+          transcript_path: transcriptPath,
+          summary_path: null,
+          summary_json_path: null,
+          transcript_text: MOCK_TRANSCRIPT,
+          summary_text: null,
+          error_message: null,
+          output_path: null,
+        };
+        pushHistory(req, result, provider, name);
+        return result;
+      }
 
       const summaryPath = req.summary_path ?? "C:/recap/summary.txt";
       const failLLM = provider === "openai" && !apiKeys["openai"];
