@@ -105,13 +105,17 @@ class WhisperTranscriber:
             TimeElapsedColumn(),
             console=Console(stderr=True),
         ) as progress:
-            task = progress.add_task("Transcribing", total=info.duration)
+            duration = info.duration or 0.0
+            if on_progress is not None and not duration:
+                logger.warning("Whisper reported no audio duration — transcription progress %% unavailable.")
+            task = progress.add_task("Transcribing", total=duration or None)
             segments = []
             for s in segments_iter:
                 segments.append(Segment(start=s.start, end=s.end, text=s.text.strip()))
-                progress.update(task, completed=s.end)
-                if on_progress is not None and info.duration:
-                    on_progress(min(1.0, s.end / info.duration))
+                if duration:
+                    progress.update(task, completed=s.end)
+                    if on_progress is not None:
+                        on_progress(min(1.0, s.end / duration))
 
-        logger.info("Got %d segments.", len(segments))
+        logger.info("Got %d segments (duration=%.1fs).", len(segments), info.duration or 0.0)
         return Transcript(segments=tuple(segments))
