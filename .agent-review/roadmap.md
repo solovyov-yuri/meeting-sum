@@ -49,7 +49,7 @@
 | [AGENT-008](issues/AGENT-008.md) | Весь .claude/ в gitignore | low | quick-win | done | 2026-07-02: ignore сужен до settings.local.json |
 | [CODE-006](issues/CODE-006.md) | Реальный прогресс без percent (в отличие от мока) | low | small | proposed | |
 | [CODE-007](issues/CODE-007.md) | Статус ключа только для сохранённого провайдера | low | small | proposed | |
-| [REL-006](issues/REL-006.md) | Гонка read-modify-write в history.json | low | small | proposed | |
+| [REL-006](issues/REL-006.md) | Гонка read-modify-write в history.json | low | small | done | 2026-07-02: файловый лок (msvcrt/fcntl) вокруг append/delete; тест |
 | [PERF-002](issues/PERF-002.md) | Чанковая суммаризация последовательная | low | medium | proposed | |
 | [DEP-002](issues/DEP-002.md) | Vite/Vitest/Tailwind/React отстают на мажор(ы) | low | medium | proposed | |
 
