@@ -99,3 +99,55 @@ def test_transcribe_params(fake_faster_whisper: dict) -> None:
     assert isinstance(result, Transcript)
     assert len(result.segments) == 1
     assert result.segments[0].text == "hello"
+
+
+def test_probe_wav_duration(tmp_path: Path) -> None:
+    import wave
+
+    from providers.whisper import _probe_wav_duration
+
+    p = tmp_path / "a.wav"
+    with wave.open(str(p), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"\x00\x00" * 3200)  # 0.2s
+
+    assert abs(_probe_wav_duration(p) - 0.2) < 1e-6
+    assert _probe_wav_duration(tmp_path / "missing.wav") == 0.0
+
+
+def test_transcribe_progress_uses_wav_probe_when_info_duration_zero(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import wave
+
+    from providers.whisper import WhisperTranscriber
+
+    wav = tmp_path / "audio.wav"  # 2-second WAV → a segment ending at 1.0s is 50% via the probe
+    with wave.open(str(wav), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"\x00\x00" * 32000)
+
+    class FakeInfo:
+        duration = 0.0  # the bug: faster-whisper reports no duration
+
+    class FakeSegment:
+        start, end, text = 0.0, 1.0, " hi "
+
+    class FakeModel:
+        def __init__(self, *a: object, **k: object) -> None: ...
+
+        def transcribe(self, audio, language, beam_size, vad_filter, condition_on_previous_text):  # type: ignore[no-untyped-def]
+            return iter([FakeSegment()]), FakeInfo()
+
+    fake_fw = MagicMock()
+    fake_fw.WhisperModel = FakeModel
+    monkeypatch.setitem(sys.modules, "faster_whisper", fake_fw)
+
+    tr = WhisperTranscriber(model_name="small", device="cpu")
+    pcts: list[float] = []
+    tr.transcribe(wav, "ru", on_progress=pcts.append)
+    assert pcts == [0.5]  # would be [] without the WAV-probe fallback
