@@ -21,17 +21,17 @@
 | [AGENT-006](issues/AGENT-006.md) | Ложный отчёт о верификации; правила нет в checked-in файлах | high | small | done | 2026-07-02: правило честной верификации добавлено в AGENTS.md |
 | [ARCH-001](issues/ARCH-001.md) | Пайплайн продублирован между cli.py и workflows.py | high | medium | in-progress | 2026-07-02: опции 2+3 — общий хвост вынесен, расхождение задокументировано; полная унификация (опция 1) отложена (нужен i18n) |
 | [ARCH-003](issues/ARCH-003.md) | output_formats — мёртвый вход контракта | medium | quick-win | proposed | |
-| [ARCH-004](issues/ARCH-004.md) | stderr моста в null — логов нет | medium | quick-win | proposed | |
+| [ARCH-004](issues/ARCH-004.md) | stderr моста в null — логов нет | medium | quick-win | done | 2026-07-02: ротируемый recap-bridge.log в data dir (вариант 1, Python); тест |
 | [SEC-002](issues/SEC-002.md) | CSP отключён в Tauri | medium | quick-win | in-progress | 2026-07-02: строгий CSP задан; не проверен в webview (dev+prod) |
 | [SEC-004](issues/SEC-004.md) | Скрытый fallback на OPENAI_API_KEY через SDK | medium | quick-win | done | 2026-07-02: factory требует ключ для внешних провайдеров; тесты (в т.ч. с OPENAI_API_KEY в env) |
 | [REL-002](issues/REL-002.md) | ffmpeg без -nostdin и timeout | medium | quick-win | done | 2026-07-02: -nostdin+DEVNULL+timeout→PreprocessingError; тесты |
-| [REL-003](issues/REL-003.md) | Консольное окно мигает на каждый вызов моста (Windows) | medium | quick-win | proposed | evidence: hypothesis |
+| [REL-003](issues/REL-003.md) | Консольное окно мигает на каждый вызов моста (Windows) | medium | quick-win | in-progress | 2026-07-02: CREATE_NO_WINDOW в bridge_command; Rust не скомпилирован здесь |
 | [CODE-005](issues/CODE-005.md) | test_connection: черновой провайдер × сохранённый base_url | medium | quick-win | proposed | |
 | [DOC-001](issues/DOC-001.md) | Контракт моста: нет test_connection/read_text/resummarize/cancel | medium | quick-win | done | 2026-07-02: §4 дополнен resummarize(стрим)/test_connection/read_text; cancel — в §6 (ARCH-002) |
 | [AGENT-003](issues/AGENT-003.md) | CLAUDE.md и AGENTS.md — дубликаты байт-в-байт | medium | quick-win | in-progress | 2026-07-02: AGENTS.md канонический, CLAUDE.md=@AGENTS.md; нужен взгляд в свежей сессии (импорт грузится) |
 | [AGENT-004](issues/AGENT-004.md) | /graphify недоступен из WSL (двойной .claude-home) | medium | quick-win | done | 2026-07-02: глобальный graphify удалён (осталась более свежая локальная копия в chem-app), триггер из глобального CLAUDE.md убран |
 | [AGENT-005](issues/AGENT-005.md) | Allowlist не соответствует workflow; нет deny для uv | medium | quick-win | proposed | нужно явное согласие (само-модификация прав) — /update-config или /fewer-permission-prompts |
-| [SEC-003](issues/SEC-003.md) | Нескоуплённые read_text/export_summary IPC | medium | small | proposed | |
+| [SEC-003](issues/SEC-003.md) | Нескоуплённые read_text/export_summary IPC | medium | small | done | 2026-07-02: read_text скоуплен (history+data dir)+UnicodeDecodeError; export требует существующий каталог; тесты |
 | [CODE-001](issues/CODE-001.md) | Хардкод путей вывода рядом с аудио; перезапись {stem}.txt | medium | small | proposed | |
 | [DEP-001](issues/DEP-001.md) | ESLint 8 EOL | medium | small | proposed | |
 | [AGENT-007](issues/AGENT-007.md) | Граница WSL/Windows-проверок не документирована | medium | small | done | 2026-07-02: раздел про WSL vs Windows-проверки в AGENTS.md |
