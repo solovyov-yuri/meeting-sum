@@ -42,6 +42,9 @@ export interface AppSettings {
   audio: string;
   transcript: string;
   summary: string;
+  /** Desktop-only: single folder for run outputs (transcript + summary), named by audio stem.
+   *  null → outputs land next to the audio file. */
+  output_dir: string | null;
   privacy_ack: boolean;
   /** Per-provider key state (CODE-007): whether a key is stored for each provider. Read-only. */
   api_keys_configured: Record<string, boolean>;

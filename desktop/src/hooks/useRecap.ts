@@ -155,12 +155,12 @@ export function useRecap() {
     setLogs([]);
     pushLog("success", `Файл выбран: ${fileName(audioPath)}`);
 
-    const dir = dirName(audioPath);
     const base = stem(audioPath);
-    // Honor the user-configured output paths from the "Пути" settings screen.
-    // Fall back to audio-derived defaults only when a setting is empty/unset.
-    const transcriptPath = settings.transcript.trim() || `${dir}/${base}.txt`;
-    const summaryPath = settings.summary.trim() || `${dir}/${base}_summary.txt`;
+    // Outputs go into the single configured "Папка для результатов" (output_dir), named by the
+    // audio stem — so distinct meetings don't overwrite each other. null → next to the audio file.
+    const outDir = settings.output_dir?.trim() || dirName(audioPath);
+    const transcriptPath = `${outDir}/${base}.txt`;
+    const summaryPath = `${outDir}/${base}_summary.txt`;
     const bridge = await getBridge();
     try {
       // No per-run overrides: the bridge uses the saved settings authoritatively, so

@@ -5,6 +5,7 @@
 # audio: data/meeting.wav
 # transcript: data/transcript.txt
 # summary: data/summary.txt
+# output_dir:                  # desktop only: single folder for run outputs (null → next to audio)
 
 transcription:
   language: ru                 # language passed to Whisper

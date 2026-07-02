@@ -79,7 +79,16 @@ class PreprocessingSettings:
 
 # ── Schema: allowed keys per section ────────────────────────────────────────────
 
-_TOP_LEVEL_KEYS = {"audio", "transcript", "summary", "transcription", "summarization", "privacy_ack", "preprocessing"}
+_TOP_LEVEL_KEYS = {
+    "audio",
+    "transcript",
+    "summary",
+    "output_dir",
+    "transcription",
+    "summarization",
+    "privacy_ack",
+    "preprocessing",
+}
 _TRANSCRIPTION_KEYS = {"language", "model"}
 _TRANSCRIPTION_MODEL_KEYS = {
     "provider",
@@ -119,6 +128,7 @@ _ENV_TOP = {
     "RECAP_AUDIO": "audio",
     "RECAP_TRANSCRIPT": "transcript",
     "RECAP_SUMMARY": "summary",
+    "RECAP_OUTPUT_DIR": "output_dir",
     "RECAP_PRIVACY_ACK": "privacy_ack",
 }
 _ENV_TRANSCRIPTION = {
@@ -213,6 +223,10 @@ class Settings:
     audio: Path = Path("data/meeting.wav")
     transcript: Path = Path("data/transcript.txt")
     summary: Path = Path("data/summary.txt")
+    # Desktop-only: a single folder for all run outputs (transcript + summary), named by audio stem.
+    # null → outputs land next to the audio file. The CLI keeps its per-file transcript/summary
+    # defaults above (deliberate CLI/desktop divergence — the desktop UI exposes only this folder).
+    output_dir: Path | None = None
     transcription: TranscriptionSettings = field(default_factory=TranscriptionSettings)
     summarization: SummarizationSettings = field(default_factory=SummarizationSettings)
     preprocessing: PreprocessingSettings = field(default_factory=PreprocessingSettings)
@@ -236,7 +250,7 @@ class Settings:
 
         _reject_unknown(raw, _TOP_LEVEL_KEYS, prefix="")
 
-        top = {k: raw[k] for k in ("audio", "transcript", "summary", "privacy_ack") if k in raw}
+        top = {k: raw[k] for k in ("audio", "transcript", "summary", "output_dir", "privacy_ack") if k in raw}
         transcription = _coerce_section(raw, "transcription")
         transcription_model = _coerce_section(transcription, "model")
         summarization = _coerce_section(raw, "summarization")
@@ -259,8 +273,9 @@ class Settings:
         _apply_env(preprocessing, _ENV_PREPROCESSING)
 
         # ── Coerce + validate ───────────────────────────────────────────────────
-        for path_field in ("audio", "transcript", "summary"):
-            if path_field in top:
+        for path_field in ("audio", "transcript", "summary", "output_dir"):
+            # output_dir may be explicitly null (→ leave as None); the others always have a value.
+            if path_field in top and top[path_field] is not None:
                 try:
                     top[path_field] = Path(top[path_field])
                 except TypeError:

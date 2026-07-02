@@ -8,16 +8,15 @@ import { isExternalProvider, PROVIDER_BASE_URLS } from "@/lib/providers";
 import type { AppSettings, ChunkingMode, ComputeType, SummaryMode, SummaryProvider, WhisperDevice } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-type SectionId = "transcription" | "summarization" | "preprocessing" | "paths" | "privacy" | "keys";
+type SectionId = "transcription" | "summarization" | "preprocessing" | "general";
 
-// Tabs follow the pipeline order: preprocess → transcribe → summarize, then general settings.
+// Tabs follow the pipeline order: preprocess → transcribe → summarize, then everything else
+// (папка результатов, приватность, ключи) folded into one «Общие» tab.
 const SECTIONS: { id: SectionId; label: string }[] = [
   { id: "preprocessing", label: "Предобработка" },
   { id: "transcription", label: "Транскрибация" },
   { id: "summarization", label: "Суммаризация" },
-  { id: "paths", label: "Пути" },
-  { id: "privacy", label: "Приватность" },
-  { id: "keys", label: "Ключи API" },
+  { id: "general", label: "Общие" },
 ];
 
 interface SettingsScreenProps {
@@ -85,9 +84,9 @@ export function SettingsScreen({ settings, onSaved }: SettingsScreenProps) {
             {section === "transcription" && <TranscriptionSection draft={draft} update={update} />}
             {section === "summarization" && <SummarizationSection draft={draft} update={update} />}
             {section === "preprocessing" && <PreprocessingSection draft={draft} update={update} />}
-            {section === "paths" && <PathsSection draft={draft} update={update} />}
-            {section === "privacy" && <PrivacySection draft={draft} update={update} />}
-            {section === "keys" && <KeysSection draft={draft} settings={settings} refresh={onSaved} />}
+            {section === "general" && (
+              <GeneralSection draft={draft} update={update} settings={settings} refresh={onSaved} />
+            )}
           </div>
         </div>
       </div>
@@ -345,22 +344,39 @@ function PreprocessingSection({ draft, update }: { draft: AppSettings; update: U
   );
 }
 
-function PathsSection({ draft, update }: { draft: AppSettings; update: UpdateFn }) {
+function GeneralSection({
+  draft,
+  update,
+  settings,
+  refresh,
+}: {
+  draft: AppSettings;
+  update: UpdateFn;
+  settings: AppSettings;
+  refresh: () => Promise<AppSettings>;
+}) {
   return (
-    <div>
-      <SectionTitle>Пути</SectionTitle>
-      <FormGrid>
-        <Field label="Аудио по умолчанию" full>
-          <Input value={draft.audio} onChange={(e) => update((d) => (d.audio = e.target.value))} />
-        </Field>
-        <Field label="Транскрипт" full>
-          <Input value={draft.transcript} onChange={(e) => update((d) => (d.transcript = e.target.value))} />
-        </Field>
-        <Field label="Саммари" full>
-          <Input value={draft.summary} onChange={(e) => update((d) => (d.summary = e.target.value))} />
-        </Field>
-      </FormGrid>
-      <p className="mt-3 text-sm text-ink-muted">История и конфигурация хранятся в каталоге данных приложения.</p>
+    <div className="flex flex-col gap-9">
+      <div>
+        <SectionTitle>Папка для результатов</SectionTitle>
+        <FormGrid>
+          <Field
+            label="Папка"
+            full
+            tooltip="Куда сохранять транскрипт и саммари. Файлы называются по имени аудиофайла, поэтому разные встречи не перезаписывают друг друга."
+            hint="Пусто — сохранять рядом с исходным аудиофайлом."
+          >
+            <Input
+              value={draft.output_dir ?? ""}
+              placeholder="рядом с аудиофайлом"
+              onChange={(e) => update((d) => (d.output_dir = e.target.value === "" ? null : e.target.value))}
+            />
+          </Field>
+        </FormGrid>
+        <p className="mt-3 text-sm text-ink-muted">История и конфигурация хранятся в каталоге данных приложения.</p>
+      </div>
+      <PrivacySection draft={draft} update={update} />
+      <KeysSection draft={draft} settings={settings} refresh={refresh} />
     </div>
   );
 }

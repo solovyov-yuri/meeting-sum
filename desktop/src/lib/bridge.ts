@@ -89,6 +89,7 @@ const MOCK_SETTINGS: AppSettings = {
   audio: "data/meeting.wav",
   transcript: "data/transcript.txt",
   summary: "data/summary.txt",
+  output_dir: null,
   privacy_ack: false,
   api_keys_configured: {},
   transcription: {

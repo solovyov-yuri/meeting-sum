@@ -122,6 +122,7 @@ def _settings_to_dict(settings: Settings) -> dict[str, Any]:
         "audio": str(settings.audio),
         "transcript": str(settings.transcript),
         "summary": str(settings.summary),
+        "output_dir": str(settings.output_dir) if settings.output_dir else None,
         "privacy_ack": settings.privacy_ack,
         "transcription": {
             "language": t.language,
