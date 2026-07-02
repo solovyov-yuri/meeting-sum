@@ -37,11 +37,14 @@ npm run test          # vitest
 npm run build         # tsc --noEmit && vite build
 ```
 
-**Verification boundary (WSL vs Windows).** From this WSL shell you CAN run the Python tools above and
-`npm run lint|test|build`. You CANNOT run `npm run tauri dev`, `tauri build`, or `cargo` here — there is no
-Rust toolchain / Tauri runtime and no GPU. Those must be run by the user on the Windows side (PowerShell),
-and their output pasted back into the chat. Treat any Rust/Tauri change as **unverified by you** until the
-user confirms a build/run.
+**Verification boundary (WSL vs Windows).** From this WSL shell you CAN run: the Python tools above;
+`npm run lint|test|build`; and the **Windows Rust toolchain** via `/mnt/c/Users/solov/.cargo/bin/cargo.exe`
+— `cargo.exe check` and `cargo.exe clippy` on `desktop/src-tauri` compile and lint the Rust in ~5s
+(deps are cached in `target/`). So a Rust change CAN be checked for compile/lint errors here — do it, don't
+assume you can't. What you CANNOT do here: actually run the GUI (`npm run tauri dev`, `tauri build`, launching
+the app) or GPU transcription — those need the user on Windows (PowerShell), output pasted back. So: Rust
+*compilation* is verifiable by you; Rust *runtime behaviour* (e.g. cancel actually stops a run, no console
+window flashes) stays **unverified until the user runs the app**.
 
 **Honesty about verification.** Never claim a check passed unless you actually ran it in this session. If a
 check is impossible here (Rust/Tauri build, GPU transcription, a live LLM endpoint), say so explicitly and
