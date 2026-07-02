@@ -538,8 +538,8 @@ def _record_history(
     entry = {
         "id": str(uuid.uuid4()),
         "created_at": datetime.now().astimezone().isoformat(),
-        "audio_path": str(options.audio_path),
-        "audio_name": options.audio_path.name,
+        "audio_path": str(options.audio_path) if options.audio_path else "",
+        "audio_name": options.audio_path.name if options.audio_path else "",
         "status": result.status,
         "transcript_path": _str_or_none(result.transcript_path),
         "summary_path": _str_or_none(result.summary_path),

@@ -49,9 +49,13 @@ STEP_EXPORT = "export"
 
 @dataclass(frozen=True)
 class RunOptions:
-    """One-file run request. ``None`` fields fall back to loaded ``Settings``."""
+    """One-file run request. ``None`` fields fall back to loaded ``Settings``.
 
-    audio_path: Path
+    ``audio_path`` may be ``None`` for summarize-only flows (``resummarize_one``), which read an
+    existing transcript and never touch the audio.
+    """
+
+    audio_path: Path | None = None
     transcript_path: Path | None = None
     summary_path: Path | None = None
     output_format: str = "telegram"
@@ -170,7 +174,7 @@ def run_one_file(
         return RunResult("failed", None, None, None, None, None, message)
 
     # ── Input validation ────────────────────────────────────────────────────────
-    if not audio_path.exists():
+    if audio_path is None or not audio_path.exists():
         return failed(STEP_PREPROCESS, f"Аудиофайл не найден: {audio_path}")
     if audio_path.suffix.lower() not in AUDIO_EXTENSIONS:
         supported = ", ".join(sorted(ext.lstrip(".").upper() for ext in AUDIO_EXTENSIONS))

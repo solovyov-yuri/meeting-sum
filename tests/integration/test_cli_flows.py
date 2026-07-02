@@ -41,7 +41,7 @@ runner = CliRunner()
 class FakeTranscriber:
     """Returns a fixed non-empty transcript without loading Whisper."""
 
-    def transcribe(self, audio: Path, language: str = "ru") -> Transcript:
+    def transcribe(self, audio: Path, language: str = "ru", *, on_progress: object = None) -> Transcript:
         from transcript import Segment, Transcript
 
         return Transcript(segments=(Segment(start=0.0, end=1.0, text="обсудили дорожную карту"),))
@@ -50,7 +50,7 @@ class FakeTranscriber:
 class EmptyTranscriber:
     """Returns an empty transcript — simulates silent audio."""
 
-    def transcribe(self, audio: Path, language: str = "ru") -> Transcript:
+    def transcribe(self, audio: Path, language: str = "ru", *, on_progress: object = None) -> Transcript:
         from transcript import Transcript
 
         return Transcript(segments=())
@@ -59,14 +59,14 @@ class EmptyTranscriber:
 class FailingTranscriber:
     """Raises on every transcription attempt — simulates corrupt audio."""
 
-    def transcribe(self, audio: Path, language: str = "ru") -> Transcript:
+    def transcribe(self, audio: Path, language: str = "ru", *, on_progress: object = None) -> Transcript:
         raise RuntimeError(f"corrupt: {audio.name}")
 
 
 class PartialTranscriber:
     """Succeeds for 'good.*' files, fails for 'bad.*'."""
 
-    def transcribe(self, audio: Path, language: str = "ru") -> Transcript:
+    def transcribe(self, audio: Path, language: str = "ru", *, on_progress: object = None) -> Transcript:
         if audio.stem == "bad":
             raise RuntimeError(f"corrupt: {audio.name}")
         from transcript import Segment, Transcript
@@ -157,7 +157,7 @@ def test_summarize_writes_formatted_summary(
     assert "- обсудили дорожную карту" in content
     assert "## Итог" not in content  # raw Markdown must be gone
     # "Summary saved" goes to stdout for non-JSON format (cli.py: err=output_format=="json")
-    assert "Summary saved" in result.output
+    assert "Сохранено" in result.stderr
 
 
 def test_summarize_transcript_text_reaches_summarizer(
@@ -267,7 +267,7 @@ def test_summarize_json_stdout_is_pure_json(
     data = json.loads(result.stdout)
     assert data["summary"] == patch_factory.response
     # status messages must not pollute stdout
-    assert "saved" in result.stderr.lower()
+    assert "сохранено" in result.stderr.lower()
 
 
 # ─── run: full flow ───────────────────────────────────────────────────────────
@@ -322,7 +322,7 @@ def test_run_transcript_saved_before_llm_failure(
     assert result.exit_code == 1
     assert tr_out.exists(), "transcript must be persisted before the LLM is called"
     assert not sum_out.exists()
-    assert "LLM error" in result.stdout + result.stderr
+    assert "подключиться" in (result.stdout + result.stderr).lower()
 
 
 def test_run_empty_transcript_skips_llm(
@@ -358,7 +358,7 @@ def test_run_empty_transcript_skips_llm(
     assert result.exit_code == 1
     assert tr_out.exists(), "transcript must be saved even for empty audio"
     assert not llm_called[0], "LLM must not be called when transcript is empty"
-    assert "no speech" in (result.stdout + result.stderr).lower()
+    assert "распознана" in (result.stdout + result.stderr).lower()
 
 
 # ─── batch: flow ──────────────────────────────────────────────────────────────
@@ -407,12 +407,12 @@ def test_batch_json_format(
     """With -f json, summaries are written as {stem}_summary.json with valid JSON."""
     (tmp_path / "meeting.wav").write_bytes(b"\x00" * 16)
 
-    result = runner.invoke(app, ["batch", str(tmp_path), "-f", "json", "-p", "ollama"])
+    result = runner.invoke(app, ["batch", str(tmp_path), "-p", "ollama"])
 
     assert result.exit_code == 0, result.stdout + result.stderr
     summary_file = tmp_path / "meeting_summary.json"
     assert summary_file.exists()
-    assert not (tmp_path / "meeting_summary.txt").exists()
+    assert (tmp_path / "meeting_summary.txt").exists()  # batch always writes both now (ARCH-001)
     data = json.loads(summary_file.read_text(encoding="utf-8"))
     assert "summary" in data
     assert "mode" in data
@@ -474,7 +474,7 @@ def test_config_transcription_language_passed_to_transcriber(
     captured: dict[str, str] = {}
 
     class LangCapturingTranscriber:
-        def transcribe(self, audio: Path, language: str = "ru") -> Transcript:
+        def transcribe(self, audio: Path, language: str = "ru", *, on_progress: object = None) -> Transcript:
             captured["language"] = language
             from transcript import Segment, Transcript
 
@@ -649,7 +649,7 @@ def test_transcribe_with_preprocessing_passes_prepared_path_to_transcriber(
     received_paths: list[Path] = []
 
     class PathCapturingTranscriber:
-        def transcribe(self, audio: Path, language: str = "ru") -> Transcript:
+        def transcribe(self, audio: Path, language: str = "ru", *, on_progress: object = None) -> Transcript:
             received_paths.append(audio)
             from transcript import Segment, Transcript
 
@@ -686,7 +686,7 @@ def test_run_with_preprocessing_passes_prepared_path_to_transcriber(
     received_paths: list[Path] = []
 
     class PathCapturingTranscriber:
-        def transcribe(self, audio: Path, language: str = "ru") -> Transcript:
+        def transcribe(self, audio: Path, language: str = "ru", *, on_progress: object = None) -> Transcript:
             received_paths.append(audio)
             from transcript import Segment, Transcript
 
@@ -768,7 +768,7 @@ def test_transcribe_preprocessing_disabled_uses_original_path(
     received_paths: list[Path] = []
 
     class PathCapturingTranscriber:
-        def transcribe(self, audio: Path, language: str = "ru") -> Transcript:
+        def transcribe(self, audio: Path, language: str = "ru", *, on_progress: object = None) -> Transcript:
             received_paths.append(audio)
             from transcript import Segment, Transcript
 
