@@ -250,6 +250,21 @@ def test_get_history_empty_when_no_file() -> None:
     assert desktop_bridge.get_history() == {"items": []}
 
 
+def test_history_append_delete_under_lock(data_dir: Path) -> None:
+    # REL-006: append/delete run under a cross-process file lock; sequential ops must still
+    # round-trip correctly (and the lock must be re-acquirable across calls).
+    for i in range(3):
+        desktop_bridge._append_history({"id": f"e{i}", "status": "success"})
+    ids = [it["id"] for it in desktop_bridge.get_history()["items"]]
+    assert ids == ["e2", "e1", "e0"]  # newest first
+
+    desktop_bridge.delete_history_item("e1")
+    assert [it["id"] for it in desktop_bridge.get_history()["items"]] == ["e2", "e0"]
+    # A stale lock file left behind must not break subsequent operations.
+    desktop_bridge._append_history({"id": "e3", "status": "success"})
+    assert desktop_bridge.get_history()["items"][0]["id"] == "e3"
+
+
 # ── test_connection / read_text ─────────────────────────────────────────────────
 
 

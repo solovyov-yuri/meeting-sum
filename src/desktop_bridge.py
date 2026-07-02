@@ -12,12 +12,14 @@ Secrets are stored in the OS keychain via :mod:`secrets_store` and are never wri
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import logging
 import os
 import sys
 import uuid
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -233,6 +235,47 @@ def test_connection(provider: str) -> dict[str, Any]:
 # ── History ──────────────────────────────────────────────────────────────────
 
 
+@contextlib.contextmanager
+def _history_lock() -> Iterator[None]:
+    """Best-effort exclusive cross-process lock around history read-modify-write.
+
+    Each bridge command is a separate process (spawn-per-call in the Rust host), so a run
+    finishing at the same time as a delete/second run could lose a row. A lock on a sidecar
+    file serialises the read+write. Cross-platform via ``msvcrt`` (Windows) / ``fcntl`` (POSIX);
+    if locking is unavailable it degrades to no lock rather than failing the operation.
+    """
+    lock_path = _history_path().with_name("history.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "w", encoding="utf-8") as f:
+        locked = False
+        try:
+            if sys.platform == "win32":
+                import msvcrt  # noqa: PLC0415
+
+                msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl  # noqa: PLC0415
+
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            locked = True
+        except OSError:
+            logger.warning("Could not acquire history lock; proceeding without it.")
+        try:
+            yield
+        finally:
+            if locked:
+                with contextlib.suppress(OSError):
+                    if sys.platform == "win32":
+                        import msvcrt  # noqa: PLC0415
+
+                        f.seek(0)
+                        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        import fcntl  # noqa: PLC0415
+
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
 def _read_history() -> list[dict[str, Any]]:
     path = _history_path()
     if not path.exists():
@@ -268,15 +311,17 @@ def read_text(path: str | None) -> dict[str, Any]:
 
 
 def delete_history_item(item_id: str) -> dict[str, Any]:
-    items = [it for it in _read_history() if it.get("id") != item_id]
-    _write_history(items)
+    with _history_lock():
+        items = [it for it in _read_history() if it.get("id") != item_id]
+        _write_history(items)
     return {"ok": True}
 
 
 def _append_history(entry: dict[str, Any]) -> None:
-    items = _read_history()
-    items.insert(0, entry)  # newest first
-    _write_history(items)
+    with _history_lock():
+        items = _read_history()
+        items.insert(0, entry)  # newest first
+        _write_history(items)
 
 
 # ── Export ─────────────────────────────────────────────────────────────────────
