@@ -195,6 +195,30 @@ def test_run_one_file_cancel_before_transcribe(
     assert not (tmp_path / "tr.txt").exists()
 
 
+def test_run_one_file_cancel_after_transcribe_keeps_transcript(
+    tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # ARCH-002: cancelling at the boundary *after* transcription must preserve the transcript
+    # path (it is already on disk), so the user does not lose the pointer to it.
+    _patch_providers(monkeypatch, Transcript(segments=(Segment(0.0, 1.0, "x"),)), FakeSummarizer())
+    calls = {"n": 0}
+
+    def cancel() -> bool:
+        calls["n"] += 1
+        return calls["n"] > 1  # False before transcribe, True after
+
+    options = RunOptions(
+        audio_path=audio_file,
+        transcript_path=tmp_path / "tr.txt",
+        summary_path=tmp_path / "sum.txt",
+        provider="ollama",
+    )
+    result = run_one_file(options, settings=Settings(), cancel=cancel)
+    assert result.status == "cancelled"
+    assert result.transcript_path == tmp_path / "tr.txt"
+    assert (tmp_path / "tr.txt").exists()
+
+
 def test_run_one_file_unknown_provider_fails(tmp_path: Path, audio_file: Path) -> None:
     options = RunOptions(audio_path=audio_file, provider="grok")
     result = run_one_file(options, settings=Settings())

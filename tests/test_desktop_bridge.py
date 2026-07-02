@@ -160,6 +160,31 @@ def test_run_recap_success_writes_history(tmp_path: Path, patch_factory: None, d
     assert "summary_text" not in entry
 
 
+def test_streaming_cancel_flag_records_cancelled_history(
+    tmp_path: Path, patch_factory: None, data_dir: Path
+) -> None:
+    # ARCH-002: a pre-existing cancel flag makes the run stop cooperatively and still land
+    # in history as `cancelled` (instead of being killed and vanishing).
+    audio = tmp_path / "meeting.wav"
+    audio.write_bytes(b"RIFF" + b"\x00" * 32)
+    flag = tmp_path / "cancel.flag"
+    flag.write_text("x", encoding="utf-8")
+
+    payload = {
+        "audio_path": str(audio),
+        "transcript_path": str(tmp_path / "tr.txt"),
+        "summary_path": str(tmp_path / "sum.txt"),
+        "overrides": {"provider": "ollama", "mode": "medium"},
+        "cancel_flag": str(flag),
+    }
+    rc = desktop_bridge._streaming("run_recap", payload)
+
+    assert rc == 0
+    history = desktop_bridge.get_history()["items"]
+    assert len(history) == 1
+    assert history[0]["status"] == "cancelled"
+
+
 def test_resummarize_reuses_transcript_and_writes_history(
     tmp_path: Path, patch_factory: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:

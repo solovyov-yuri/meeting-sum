@@ -455,9 +455,16 @@ def _streaming(command: str, payload: dict[str, Any]) -> int:
     def emit(event: workflows.ProgressEvent) -> None:
         _emit_line({"type": "progress", "event": _event_to_dict(event)})
 
+    # Cooperative cancellation (ARCH-002): the Rust host passes the path of a flag file it
+    # creates when the user hits "Stop". The workflow polls this between stages and returns a
+    # real RunResult("cancelled") — so the transcript pointer and history entry are preserved.
+    # Popped here so it never reaches _build_run_options.
+    cancel_flag = payload.pop("cancel_flag", None)
+    cancel: workflows.CancelCheck | None = Path(cancel_flag).exists if cancel_flag else None
+
     runner = _STREAMING_COMMANDS[command]
     try:
-        result = runner(payload, emit=emit)
+        result = runner(payload, emit=emit, cancel=cancel)
     except Exception as exc:  # noqa: BLE001 - boundary: report, never crash silently
         logger.exception("%s failed", command)
         _emit_line({"type": "error", "error": workflows.humanize_error(exc)})
