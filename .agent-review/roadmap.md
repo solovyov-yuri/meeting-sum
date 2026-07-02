@@ -22,9 +22,9 @@
 | [ARCH-001](issues/ARCH-001.md) | Пайплайн продублирован между cli.py и workflows.py | high | medium | proposed | |
 | [ARCH-003](issues/ARCH-003.md) | output_formats — мёртвый вход контракта | medium | quick-win | proposed | |
 | [ARCH-004](issues/ARCH-004.md) | stderr моста в null — логов нет | medium | quick-win | proposed | |
-| [SEC-002](issues/SEC-002.md) | CSP отключён в Tauri | medium | quick-win | proposed | |
+| [SEC-002](issues/SEC-002.md) | CSP отключён в Tauri | medium | quick-win | in-progress | 2026-07-02: строгий CSP задан; не проверен в webview (dev+prod) |
 | [SEC-004](issues/SEC-004.md) | Скрытый fallback на OPENAI_API_KEY через SDK | medium | quick-win | proposed | evidence: hypothesis |
-| [REL-002](issues/REL-002.md) | ffmpeg без -nostdin и timeout | medium | quick-win | proposed | |
+| [REL-002](issues/REL-002.md) | ffmpeg без -nostdin и timeout | medium | quick-win | done | 2026-07-02: -nostdin+DEVNULL+timeout→PreprocessingError; тесты |
 | [REL-003](issues/REL-003.md) | Консольное окно мигает на каждый вызов моста (Windows) | medium | quick-win | proposed | evidence: hypothesis |
 | [CODE-005](issues/CODE-005.md) | test_connection: черновой провайдер × сохранённый base_url | medium | quick-win | proposed | |
 | [DOC-001](issues/DOC-001.md) | Контракт моста: нет test_connection/read_text/resummarize/cancel | medium | quick-win | proposed | |
@@ -40,13 +40,13 @@
 | [CODE-002](issues/CODE-002.md) | run_one_file строит summarizer дважды | low | quick-win | proposed | |
 | [CODE-003](issues/CODE-003.md) | Мёртвые transcribe_audio/summarize_transcript | low | quick-win | proposed | вместе с ARCH-001 |
 | [CODE-004](issues/CODE-004.md) | Мелкий копипаст (дубликат в кортеже, no-op re-raise и др.) | low | quick-win | proposed | |
-| [REL-005](issues/REL-005.md) | write_text_atomic: нет fsync; утечка tmp при сбое | low | quick-win | proposed | |
-| [REL-007](issues/REL-007.md) | SSE-ошибки посреди стрима мимо retry | low | quick-win | proposed | evidence: hypothesis |
-| [REL-008](issues/REL-008.md) | _ensure_output mkdir вне error boundary | low | quick-win | proposed | |
+| [REL-005](issues/REL-005.md) | write_text_atomic: нет fsync; утечка tmp при сбое | low | quick-win | done | 2026-07-02: flush+fsync до rename, unlink tmp при сбое write; тест |
+| [REL-007](issues/REL-007.md) | SSE-ошибки посреди стрима мимо retry | low | quick-win | done | 2026-07-02: httpx.HTTPError добавлен в _RETRYABLE; тест на mid-stream |
+| [REL-008](issues/REL-008.md) | _ensure_output mkdir вне error boundary | low | quick-win | done | 2026-07-02: mkdir в try/except OSError→Exit(1); тест |
 | [DEP-004](issues/DEP-004.md) | openai>=1.0 допускает несовместимый мажор | low | quick-win | proposed | |
-| [CONV-001](issues/CONV-001.md) | ruff known-first-party: призраки pipeline/protocols | low | quick-win | proposed | |
-| [DOC-002](issues/DOC-002.md) | README не упоминает десктоп-приложение | low | quick-win | proposed | |
-| [AGENT-008](issues/AGENT-008.md) | Весь .claude/ в gitignore | low | quick-win | proposed | |
+| [CONV-001](issues/CONV-001.md) | ruff known-first-party: призраки pipeline/protocols | low | quick-win | done | 2026-07-02: убраны pipeline/protocols, добавлен preprocessing |
+| [DOC-002](issues/DOC-002.md) | README не упоминает десктоп-приложение | low | quick-win | done | 2026-07-02: секция «Десктоп-приложение» со ссылками |
+| [AGENT-008](issues/AGENT-008.md) | Весь .claude/ в gitignore | low | quick-win | done | 2026-07-02: ignore сужен до settings.local.json |
 | [CODE-006](issues/CODE-006.md) | Реальный прогресс без percent (в отличие от мока) | low | small | proposed | |
 | [CODE-007](issues/CODE-007.md) | Статус ключа только для сохранённого провайдера | low | small | proposed | |
 | [REL-006](issues/REL-006.md) | Гонка read-modify-write в history.json | low | small | proposed | |
