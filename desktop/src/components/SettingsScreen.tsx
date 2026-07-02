@@ -389,8 +389,8 @@ function KeysSection({
 }) {
   const { toast } = useToast();
   const provider = draft.summarization.model.provider;
-  const configured =
-    settings.summarization.model.api_key_configured && settings.summarization.model.provider === provider;
+  // CODE-007: reflect the key state of the *drafted* provider, not only the saved one.
+  const configured = settings.api_keys_configured?.[provider] ?? false;
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const external = isExternalProvider(draft.summarization.model.base_url, provider);

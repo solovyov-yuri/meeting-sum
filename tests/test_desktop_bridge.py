@@ -285,6 +285,35 @@ def test_test_connection_unknown_provider() -> None:
     assert res["ok"] is False
 
 
+def test_test_connection_ignores_saved_base_url_for_other_provider(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # CODE-005: saved config is ollama with a local base_url; checking a *different* draft
+    # provider (openai) must not borrow ollama's local URL and mis-report "local".
+    desktop_bridge.save_settings(
+        {"summarization": {"model": {"provider": "ollama", "base_url": "http://localhost:11434/v1"}}}
+    )
+    monkeypatch.setattr(secrets_store, "has_api_key", lambda provider: False)
+    res = desktop_bridge.test_connection("openai")
+    assert res["ok"] is False
+    assert "ключ" in res["message"].lower()  # treated as external, key missing
+
+
+def test_get_settings_exposes_per_provider_key_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    # CODE-007: key state is exposed for every provider, not only the saved one.
+    monkeypatch.setattr(secrets_store, "has_api_key", lambda provider: provider == "xai")
+    keys = desktop_bridge.get_settings()["api_keys_configured"]
+    assert keys["xai"] is True
+    assert keys["openai"] is False
+
+
+def test_save_settings_ignores_api_keys_configured(data_dir: Path) -> None:
+    # CODE-007: the read-only view field must not break the strict save round-trip.
+    settings = desktop_bridge.get_settings()
+    assert "api_keys_configured" in settings
+    desktop_bridge.save_settings(settings)  # must not raise ConfigError
+
+
 def test_read_text_missing(tmp_path: Path) -> None:
     res = desktop_bridge.read_text(str(tmp_path / "nope.txt"))
     assert res == {"text": None, "exists": False}

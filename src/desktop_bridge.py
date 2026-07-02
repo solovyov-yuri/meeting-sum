@@ -160,6 +160,9 @@ def _settings_to_dict(settings: Settings) -> dict[str, Any]:
             "highpass_hz": p.highpass_hz,
             "keep_temp": p.keep_temp,
         },
+        # Per-provider key state (CODE-007): the UI can show "key saved/not saved" for the
+        # currently-drafted provider, not only the saved one. Keys are per-provider in the keychain.
+        "api_keys_configured": {name: _api_key_configured(name) for name in PROVIDER_PRESETS},
     }
 
 
@@ -206,6 +209,7 @@ def save_settings(payload: dict[str, Any]) -> dict[str, Any]:
     import yaml  # noqa: PLC0415
 
     data = json.loads(json.dumps(payload))  # deep copy of plain JSON
+    data.pop("api_keys_configured", None)  # read-only view field (CODE-007), never persisted
     summarization = data.get("summarization")
     if isinstance(summarization, dict):
         model = summarization.get("model")
@@ -252,7 +256,11 @@ def test_connection(provider: str) -> dict[str, Any]:
     if provider not in PROVIDER_PRESETS:
         return {"ok": False, "message": f"Неизвестный провайдер: {provider}."}
     settings = _load_settings()
-    base_url = settings.summarization.model.base_url or PROVIDER_PRESETS.get(provider)
+    saved = settings.summarization.model
+    # `provider` comes from the (possibly unsaved) UI draft. Only trust the saved base_url when it
+    # belongs to the SAME provider; otherwise it describes a different provider and would give a
+    # wrong verdict (CODE-005) — fall back to the provider's preset URL.
+    base_url = saved.base_url if (saved.base_url and provider == saved.provider) else PROVIDER_PRESETS.get(provider)
     external = workflows.is_external_provider(base_url, provider)
     if external and not secrets_store.has_api_key(provider):
         return {"ok": False, "message": "Для внешнего провайдера не сохранён ключ API."}

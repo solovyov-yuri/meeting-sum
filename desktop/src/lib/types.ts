@@ -43,6 +43,8 @@ export interface AppSettings {
   transcript: string;
   summary: string;
   privacy_ack: boolean;
+  /** Per-provider key state (CODE-007): whether a key is stored for each provider. Read-only. */
+  api_keys_configured: Record<string, boolean>;
   transcription: {
     language: string;
     model: TranscriptionModelSettings;

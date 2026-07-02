@@ -90,6 +90,7 @@ const MOCK_SETTINGS: AppSettings = {
   transcript: "data/transcript.txt",
   summary: "data/summary.txt",
   privacy_ack: false,
+  api_keys_configured: {},
   transcription: {
     language: "ru",
     model: {
@@ -189,6 +190,7 @@ function browserBridge(): Bridge {
     async getSettings() {
       const s = structuredClone(settings);
       s.summarization.model.api_key_configured = !!apiKeys[s.summarization.model.provider];
+      s.api_keys_configured = Object.fromEntries(Object.keys(apiKeys).map((p) => [p, !!apiKeys[p]]));
       return s;
     },
     async saveSettings(next) {
