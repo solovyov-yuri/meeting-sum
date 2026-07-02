@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -83,6 +83,8 @@ class RunResult:
     transcript_text: str | None
     summary_text: str | None
     error_message: str | None = None
+    # Only set by preprocess-only runs: the produced *.preprocessed.wav (no transcript/summary).
+    output_path: Path | None = None
 
 
 ProgressCallback = Callable[[ProgressEvent], None]
@@ -140,8 +142,16 @@ def run_one_file(
     progress: ProgressCallback | None = None,
     cancel: CancelCheck | None = None,
     transcriber_factory: TranscriberFactory | None = None,
+    stop_after: str | None = None,
+    force_preprocess: bool = False,
 ) -> RunResult:
     """Run the full one-file pipeline and return a structured result.
+
+    ``stop_after="transcribe"`` runs preprocess + transcribe only (transcribe-only mode): the
+    transcript is written and the run returns ``success`` before summarization — an empty
+    transcript is success-with-warning here (transcription ran, just found no speech).
+    ``force_preprocess=True`` runs preprocessing even if ``settings.preprocessing.enabled`` is
+    False (used by full mode, where preprocessing is a mandatory step).
 
     Unlike the low-level helpers, this orchestrator catches errors at step boundaries
     and turns them into a ``RunResult`` with a user-facing ``error_message`` (technical
@@ -180,11 +190,14 @@ def run_one_file(
         return failed(STEP_PREPROCESS, f"Неподдерживаемый формат аудио: {audio_path.suffix}. Поддерживаются: {supported}.")
 
     # Build the summarizer once, up front (validates provider/mode/language: raises ValueError).
-    # The same instance is reused in _summarize_and_export — no second construction.
-    try:
-        summarizer = make_summarizer(settings, provider_name, mode_name, options.model, options.summary_language)
-    except ValueError as exc:
-        return failed(STEP_SUMMARIZE, str(exc))
+    # The same instance is reused in _summarize_and_export — no second construction. Transcribe-only
+    # never summarizes, so it must NOT require a summarization key/provider to be configured.
+    summarizer: LLMSummarizer | None = None
+    if stop_after != STEP_TRANSCRIBE:
+        try:
+            summarizer = make_summarizer(settings, provider_name, mode_name, options.model, options.summary_language)
+        except ValueError as exc:
+            return failed(STEP_SUMMARIZE, str(exc))
 
     try:
         _ensure_parent(transcript_path)
@@ -204,11 +217,13 @@ def run_one_file(
         return failed(STEP_TRANSCRIBE, f"Не удалось загрузить модель распознавания: {humanize_error(exc)}")
 
     lang = options.transcription_language or settings.transcription.language
+    # Full mode makes preprocessing mandatory (force_preprocess), overriding a disabled setting.
+    prep_cfg = replace(settings.preprocessing, enabled=True) if force_preprocess else settings.preprocessing
     try:
-        if settings.preprocessing.enabled:
+        if prep_cfg.enabled:
             emit(ProgressEvent(STEP_PREPROCESS, "running", "Предобработка аудио…"))
-        with prepared_audio(audio_path, settings.preprocessing) as prepared:
-            if settings.preprocessing.enabled:
+        with prepared_audio(audio_path, prep_cfg) as prepared:
+            if prep_cfg.enabled:
                 emit(ProgressEvent(STEP_PREPROCESS, "success", "Аудио подготовлено."))
             emit(ProgressEvent(STEP_TRANSCRIBE, "running", "Транскрибация началась.", percent=0.0))
 
@@ -231,6 +246,13 @@ def run_one_file(
         return failed(STEP_TRANSCRIBE, f"Не удалось сохранить транскрипт: {exc}")
     emit(ProgressEvent(STEP_TRANSCRIBE, "success", f"Транскрипт сохранён: {transcript_path}", path=transcript_path))
 
+    # Transcribe-only: stop here with the transcript on disk. Empty is success-with-warning
+    # (transcription ran and produced a file; it just found no speech) — not a failure.
+    if stop_after == STEP_TRANSCRIBE:
+        if transcript.is_empty:
+            emit(ProgressEvent(STEP_TRANSCRIBE, "warning", "Речь не распознана — транскрипт пуст."))
+        return RunResult("success", transcript_path, None, None, transcript_text, None, None)
+
     if transcript.is_empty:
         msg = "Речь не распознана — саммари не создано."
         emit(ProgressEvent(STEP_TRANSCRIBE, "warning", msg))
@@ -242,6 +264,7 @@ def run_one_file(
         return RunResult("cancelled", transcript_path, None, None, transcript_text, None, msg)
 
     # ── Summarize + export (shared with resummarize_one) ────────────────────────────
+    assert summarizer is not None  # built above whenever stop_after != "transcribe"
     return _summarize_and_export(
         settings,
         transcript,
@@ -255,6 +278,57 @@ def run_one_file(
         transcript_text=transcript_text,
         emit=emit,
     )
+
+
+def preprocess_one(
+    options: RunOptions,
+    *,
+    settings: Settings | None = None,
+    progress: ProgressCallback | None = None,
+) -> RunResult:
+    """Preprocess-only mode: run ffmpeg and write a persistent ``<stem>.preprocessed.wav``.
+
+    Like the CLI ``preprocess`` command, invoking this IS the request, so it always runs ffmpeg
+    (ignores ``preprocessing.enabled``). The output goes into ``settings.output_dir`` (or next to
+    the audio when unset); the path is returned on ``RunResult.output_path`` and on the success
+    event so the desktop can reveal it.
+    """
+    from preprocessing import PreprocessingError, preprocess_audio  # noqa: PLC0415
+
+    emit = progress if progress is not None else _noop
+    if settings is None:
+        settings = Settings.load()
+    audio_path = options.audio_path
+
+    def failed(message: str) -> RunResult:
+        emit(ProgressEvent(STEP_PREPROCESS, "error", message))
+        return RunResult("failed", None, None, None, None, None, message)
+
+    if audio_path is None or not audio_path.exists():
+        return failed(f"Аудиофайл не найден: {audio_path}")
+    if audio_path.suffix.lower() not in AUDIO_EXTENSIONS:
+        supported = ", ".join(sorted(ext.lstrip(".").upper() for ext in AUDIO_EXTENSIONS))
+        return failed(f"Неподдерживаемый формат аудио: {audio_path.suffix}. Поддерживаются: {supported}.")
+
+    out_dir = settings.output_dir or audio_path.parent
+    output_path = out_dir / f"{audio_path.stem}.preprocessed.wav"
+    try:
+        _ensure_parent(output_path)
+    except OSError as exc:
+        return failed(f"Каталог для результатов недоступен: {exc}")
+
+    emit(ProgressEvent(STEP_PREPROCESS, "running", "Предобработка аудио…"))
+    try:
+        preprocess_audio(audio_path, output_path, settings.preprocessing)
+    except PreprocessingError as exc:
+        logger.exception("Preprocessing failed")
+        return failed(f"Ошибка предобработки аудио: {humanize_error(exc)}")
+    except Exception as exc:
+        logger.exception("Preprocessing failed")
+        return failed(f"Ошибка предобработки аудио: {humanize_error(exc)}")
+
+    emit(ProgressEvent(STEP_PREPROCESS, "success", f"Готово: {output_path}", path=output_path))
+    return RunResult("success", None, None, None, None, None, None, output_path=output_path)
 
 
 def _summarize_and_export(

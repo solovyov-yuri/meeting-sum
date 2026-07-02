@@ -72,6 +72,104 @@ def test_is_external_remote_host() -> None:
     assert is_external_provider("https://api.x.ai/v1", "xai") is True
 
 
+# ── run modes: transcribe-only / preprocess-only ───────────────────────────────
+
+
+def test_run_one_file_transcribe_only_skips_summarize(
+    tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import providers.factory as factory_mod
+
+    tr = Transcript(segments=(Segment(0.0, 1.0, "привет"),))
+    monkeypatch.setattr(factory_mod, "make_transcriber", lambda settings: FakeTranscriber(tr))
+    # summarizer must NOT be built for transcribe-only — make it explode if constructed.
+    def _no_summarizer(*_a: object, **_k: object) -> object:
+        raise AssertionError("make_summarizer must not be called in transcribe-only mode")
+
+    monkeypatch.setattr(factory_mod, "make_summarizer", _no_summarizer)
+
+    events: list[ProgressEvent] = []
+    options = RunOptions(
+        audio_path=audio_file,
+        transcript_path=tmp_path / "tr.txt",
+        summary_path=tmp_path / "sum.txt",
+        provider="ollama",
+    )
+    result = run_one_file(options, settings=Settings(), progress=events.append, stop_after="transcribe")
+
+    assert result.status == "success"
+    assert (tmp_path / "tr.txt").exists()
+    assert not (tmp_path / "sum.txt").exists()  # summarization skipped
+    assert result.summary_path is None
+    steps = {(e.step, e.status) for e in events}
+    assert ("transcribe", "success") in steps
+    assert ("summarize", "success") not in steps
+
+
+def test_run_one_file_transcribe_only_empty_is_success(
+    tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import providers.factory as factory_mod
+
+    monkeypatch.setattr(factory_mod, "make_transcriber", lambda settings: FakeTranscriber(Transcript(segments=())))
+    monkeypatch.setattr(factory_mod, "make_summarizer", lambda *a, **k: FakeSummarizer())
+
+    options = RunOptions(audio_path=audio_file, transcript_path=tmp_path / "tr.txt", provider="ollama")
+    result = run_one_file(options, settings=Settings(), stop_after="transcribe")
+    # Empty transcript is success-with-warning in transcribe-only mode (not failed).
+    assert result.status == "success"
+    assert (tmp_path / "tr.txt").exists()
+
+
+def test_run_one_file_force_preprocess_overrides_disabled(
+    tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import contextlib
+
+    seen_enabled: list[bool] = []
+
+    @contextlib.contextmanager
+    def fake_prepared(audio: Path, cfg: object):  # type: ignore[no-untyped-def]
+        seen_enabled.append(cfg.enabled)  # type: ignore[attr-defined]
+        yield audio
+
+    monkeypatch.setattr("preprocessing.prepared_audio", fake_prepared)
+    _patch_providers(monkeypatch, Transcript(segments=(Segment(0.0, 1.0, "x"),)), FakeSummarizer())
+
+    events: list[ProgressEvent] = []
+    options = RunOptions(audio_path=audio_file, transcript_path=tmp_path / "tr.txt", summary_path=tmp_path / "s.txt", provider="ollama")
+    # Settings() defaults preprocessing.enabled=False; force_preprocess must flip it on.
+    run_one_file(options, settings=Settings(), progress=events.append, force_preprocess=True)
+
+    assert seen_enabled == [True]
+    assert ("preprocess", "running") in {(e.step, e.status) for e in events}
+
+
+def test_preprocess_one_writes_output(tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_preprocess(inp: Path, out: Path, cfg: object) -> None:
+        out.write_bytes(b"wav")
+
+    monkeypatch.setattr("preprocessing.preprocess_audio", fake_preprocess)
+    result = workflows.preprocess_one(RunOptions(audio_path=audio_file), settings=Settings(output_dir=tmp_path / "out"))
+
+    assert result.status == "success"
+    assert result.output_path == tmp_path / "out" / "meeting.preprocessed.wav"
+    assert result.output_path.exists()
+    assert result.transcript_path is None and result.summary_path is None
+
+
+def test_preprocess_one_defaults_next_to_audio(tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("preprocessing.preprocess_audio", lambda inp, out, cfg: out.write_bytes(b"x"))
+    result = workflows.preprocess_one(RunOptions(audio_path=audio_file), settings=Settings())
+    assert result.output_path == audio_file.parent / "meeting.preprocessed.wav"
+
+
+def test_preprocess_one_missing_audio(tmp_path: Path) -> None:
+    result = workflows.preprocess_one(RunOptions(audio_path=tmp_path / "nope.wav"), settings=Settings())
+    assert result.status == "failed"
+    assert "не найден" in (result.error_message or "").lower()
+
+
 # ── run_one_file ──────────────────────────────────────────────────────────────
 
 
