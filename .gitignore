@@ -19,4 +19,6 @@ data/*
 
 # Local config (contains secrets / personal paths)
 config.yaml
-.claude/
+# Ignore only machine-local Claude settings; a shared .claude/settings.json (and any
+# project skills) can be versioned. The project-review skill itself lives globally (AGENT-001).
+.claude/settings.local.json
