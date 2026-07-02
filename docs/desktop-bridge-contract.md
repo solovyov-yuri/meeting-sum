@@ -252,6 +252,22 @@ Final output:
 }
 ```
 
+### `serve` — persistent warm-model worker (PERF-001)
+
+To avoid reloading the Whisper model (~10–60 s for large-v3) on every run, the Rust host does **not**
+spawn a fresh process per `run_recap`. Instead it keeps one `recap-bridge serve` process alive and
+routes runs through it:
+
+- `serve` reads **one JSON run-request per line** on stdin and, per run, streams the same framing as
+  `run_recap` (`{"type":"progress"}` events then a terminal `{"type":"result"}` / `{"type":"error"}`
+  line). Its stdout stays open between runs — the host reads until the terminal line, not EOF.
+- The worker caches exactly one transcriber, keyed on the transcription model fields; changing the
+  model drops the old one (freeing GPU memory) before building the new.
+- Runs are serialised by the host (a mutex), so `serve` only ever handles one request at a time.
+- **Fallback:** if the worker fails to spawn or its pipe breaks, the host falls back to a fresh
+  spawn-per-call `run_recap` — slow (model reloads) but correct.
+- Only `run_recap` uses the worker. `resummarize` is LLM-only (no model) and stays spawn-per-call.
+
 ### `resummarize`
 
 **Streaming** (second NDJSON channel besides `run_recap`). Re-runs only summarization on an existing
