@@ -26,11 +26,12 @@ export interface LogEntry {
   message: string;
 }
 
-export interface RunOverrides {
+/** Read-only snapshot of the config a run used, for display in the Inspector.
+ *  Runs always use the *saved* settings (single source of truth) — there are no per-run
+ *  overrides, so changing a setting and re-running or retrying always takes effect. */
+export interface RunConfig {
   provider: string;
   model: string;
-  transcription_language: string;
-  summary_language: string;
   mode: string;
 }
 
@@ -71,7 +72,7 @@ export function useRecap() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [audioPath, setAudioPath] = useState<string | null>(null);
-  const [overrides, setOverrides] = useState<RunOverrides | null>(null);
+  const [runConfig, setRunConfig] = useState<RunConfig | null>(null);
 
   const [phase, setPhase] = useState<Phase>("idle");
   const [steps, setSteps] = useState(initialSteps());
@@ -90,17 +91,14 @@ export function useRecap() {
     const bridge = await getBridge();
     const s = await bridge.getSettings();
     setSettings(s);
-    setOverrides((prev) =>
-      prev ?? {
-        provider: s.summarization.model.provider,
-        model: s.summarization.model.name,
-        transcription_language: s.transcription.language,
-        summary_language: s.summarization.language ?? "ru",
-        mode: s.summarization.mode,
-      },
-    );
     return s;
   }, []);
+
+  const configFromSettings = (s: AppSettings): RunConfig => ({
+    provider: s.summarization.model.provider,
+    model: s.summarization.model.name,
+    mode: s.summarization.mode,
+  });
 
   useEffect(() => {
     (async () => {
@@ -148,8 +146,9 @@ export function useRecap() {
   );
 
   const start = useCallback(async () => {
-    if (!audioPath || !settings || !overrides) return;
+    if (!audioPath || !settings) return;
     setActiveHistoryId(null);
+    setRunConfig(configFromSettings(settings));
     setPhase("running");
     setResult(null);
     setSteps(initialSteps());
@@ -164,18 +163,13 @@ export function useRecap() {
     const summaryPath = settings.summary.trim() || `${dir}/${base}_summary.txt`;
     const bridge = await getBridge();
     try {
+      // No per-run overrides: the bridge uses the saved settings authoritatively, so
+      // provider/model/mode always reflect what's in Settings (fixes the stale-model bug).
       const res = await bridge.runRecap(
         {
           audio_path: audioPath,
           transcript_path: transcriptPath,
           summary_path: summaryPath,
-          overrides: {
-            provider: overrides.provider,
-            model: overrides.model,
-            mode: overrides.mode,
-            transcription_language: overrides.transcription_language,
-            summary_language: overrides.summary_language,
-          },
         },
         applyEvent,
       );
@@ -207,14 +201,16 @@ export function useRecap() {
       setPhase("done");
     }
     await refreshHistory();
-  }, [audioPath, settings, overrides, applyEvent, pushLog, refreshHistory]);
+  }, [audioPath, settings, applyEvent, pushLog, refreshHistory]);
 
   const retrySummarization = useCallback(async () => {
     // Re-run summarization ONLY, reusing the transcript already on disk. Never
-    // re-transcribe (that would re-process the whole meeting).
+    // re-transcribe (that would re-process the whole meeting). Uses the *current* saved
+    // settings, so fixing the model/provider in Settings and retrying actually takes effect.
     const transcriptPath = result?.transcript_path;
-    if (!audioPath || !overrides || !transcriptPath) return;
+    if (!audioPath || !settings || !transcriptPath) return;
 
+    setRunConfig(configFromSettings(settings));
     setPhase("running");
     setActiveHistoryId(null);
     setSteps((prev) => ({ ...prev, summarize: { status: "pending", percent: null }, export: { status: "pending", percent: null } }));
@@ -228,13 +224,6 @@ export function useRecap() {
           audio_path: audioPath,
           transcript_path: transcriptPath,
           summary_path: summaryPath,
-          overrides: {
-            provider: overrides.provider,
-            model: overrides.model,
-            mode: overrides.mode,
-            transcription_language: overrides.transcription_language,
-            summary_language: overrides.summary_language,
-          },
         },
         applyEvent,
       );
@@ -246,7 +235,18 @@ export function useRecap() {
       setPhase("done");
     }
     await refreshHistory();
-  }, [audioPath, overrides, result, applyEvent, pushLog, refreshHistory]);
+  }, [audioPath, settings, result, applyEvent, pushLog, refreshHistory]);
+
+  const newRun = useCallback(() => {
+    setActiveHistoryId(null);
+    setAudioPath(null);
+    setRunConfig(null);
+    setResult(null);
+    setPhase("idle");
+    setSteps(initialSteps());
+    setLogs([]);
+    setEditedSummary("");
+  }, []);
 
   const cancel = useCallback(async () => {
     const bridge = await getBridge();
@@ -262,6 +262,7 @@ export function useRecap() {
     ]);
     setActiveHistoryId(item.id);
     setAudioPath(item.audio_path);
+    setRunConfig({ provider: item.provider, model: item.model, mode: item.mode });
     setSteps(stepsForStatus(item.status));
     setLogs([
       { id: logCounter.current++, time: nowTime(), status: "success", message: `Открыт запуск: ${item.audio_name}` },
@@ -301,8 +302,7 @@ export function useRecap() {
     history,
     loadError,
     audioPath,
-    overrides,
-    setOverrides,
+    runConfig,
     phase,
     steps,
     logs,
@@ -314,6 +314,7 @@ export function useRecap() {
     refreshHistory,
     selectFile,
     pickFile,
+    newRun,
     start,
     retrySummarization,
     cancel,

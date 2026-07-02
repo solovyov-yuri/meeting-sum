@@ -58,7 +58,7 @@ function StepCircle({ status, percent }: { status: StepStatus; percent: number |
       ) : (
         <Loader2 className="h-6 w-6 animate-spin text-accent" />
       );
-  else inner = <Hourglass className="h-5 w-5 text-warn" />;
+  else inner = <Hourglass className="h-5 w-5 text-ink-soft" />;
 
   return (
     <div
@@ -87,7 +87,7 @@ export function ProgressSteps({ steps }: { steps: Record<StepName, StepState> })
                 state.status === "running" && "text-accent",
                 state.status === "error" && "text-danger",
                 state.status === "warning" && "text-warn",
-                (state.status === "pending" || state.status === "cancelled") && "text-warn",
+                (state.status === "pending" || state.status === "cancelled") && "text-ink-soft",
               )}
             >
               {state.status === "running" && state.percent != null ? `${state.percent}%` : STATUS_LABELS[state.status]}

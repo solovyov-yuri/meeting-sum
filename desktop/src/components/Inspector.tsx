@@ -1,20 +1,14 @@
 import { Copy, Download, FolderOpen, RotateCcw } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input, Label, Segmented, Select } from "@/components/ui/controls";
 import { useToast } from "@/components/ui/toast";
 import { getBridge } from "@/lib/bridge";
 import type { AppSettings, ExportFormat, RunResult, SummaryMode } from "@/lib/types";
 import { dirName, stem } from "@/lib/utils";
-import type { Phase, RunOverrides } from "@/hooks/useRecap";
+import type { Phase, RunConfig } from "@/hooks/useRecap";
 
-const PROVIDERS = ["openai", "xai", "ollama", "lm-studio", "vllm"].map((v) => ({ value: v, label: v }));
-
-const TRANSCRIPTION_LANGS = [
-  { value: "ru", label: "Русский" },
-  { value: "en", label: "English" },
-  { value: "auto", label: "Авто" },
-];
+const LANG_LABELS: Record<string, string> = { ru: "Русский", en: "English", auto: "Авто" };
+const MODE_LABELS: Record<SummaryMode, string> = { brief: "краткий", medium: "средний", detailed: "подробный" };
 
 const EXPORT_LABELS: Record<ExportFormat, string> = {
   telegram: "Telegram (.txt)",
@@ -26,8 +20,7 @@ interface InspectorProps {
   phase: Phase;
   result: RunResult | null;
   settings: AppSettings;
-  overrides: RunOverrides;
-  setOverrides: (next: RunOverrides) => void;
+  runConfig: RunConfig | null;
   audioPath: string | null;
   editedSummary: string;
   onRetry: () => void;
@@ -55,65 +48,40 @@ function InfoBox({ rows }: { rows: [string, React.ReactNode][] }) {
   );
 }
 
-function RunInspector({ settings, overrides, setOverrides, phase }: InspectorProps) {
-  const disabled = phase === "running";
-  const patch = (partial: Partial<RunOverrides>) => setOverrides({ ...overrides, ...partial });
-  const formats = ["telegram", "json"].map((f) => (f === "telegram" ? "Telegram" : "JSON")).join(", ");
-
+function RunInspector({ settings }: InspectorProps) {
+  // Read-only: runs always use the saved Settings (single source of truth). No per-run editing.
+  const s = settings.summarization;
   return (
     <>
-      <h2 className="text-[15px] font-semibold text-ink">Настройки запуска</h2>
-      <Field label="Провайдер">
-        <Select
-          disabled={disabled}
-          value={overrides.provider}
-          options={PROVIDERS}
-          onChange={(e) => patch({ provider: e.target.value })}
-        />
-      </Field>
-      <Field label="Модель">
-        <Input disabled={disabled} value={overrides.model} onChange={(e) => patch({ model: e.target.value })} />
-      </Field>
-      <Field label="Язык распознавания">
-        <Select
-          disabled={disabled}
-          value={overrides.transcription_language}
-          options={TRANSCRIPTION_LANGS}
-          onChange={(e) => patch({ transcription_language: e.target.value })}
-        />
-      </Field>
-      <Field label="Режим резюме">
-        <Segmented<SummaryMode>
-          value={overrides.mode as SummaryMode}
-          onChange={(mode) => patch({ mode })}
-          options={[
-            { value: "brief", label: "brief" },
-            { value: "medium", label: "medium" },
-            { value: "detailed", label: "detailed" },
-          ]}
-        />
-      </Field>
+      <h2 className="text-[15px] font-semibold text-ink">Параметры запуска</h2>
       <InfoBox
         rows={[
-          ["Chunking", settings.summarization.chunking_mode],
+          ["Провайдер", s.model.provider],
+          ["Модель", s.model.name],
+          ["Режим саммари", MODE_LABELS[s.mode]],
+          ["Язык распознавания", LANG_LABELS[settings.transcription.language] ?? settings.transcription.language],
           ["Предобработка", settings.preprocessing.enabled ? "вкл" : "выкл"],
-          ["Форматы", formats],
+          ["Chunking", s.chunking_mode],
         ]}
       />
       <div className="rounded-card border border-border bg-panel-soft p-3 text-base text-ink-muted">
-        Ключи API настраиваются только на экране настроек.
+        Параметры берутся из раздела «Настройки». Чтобы изменить провайдера, модель или режим —
+        откройте «Настройки» и запустите разбор заново.
       </div>
     </>
   );
 }
 
-function ResultInspector({ result, audioPath, editedSummary, overrides, onRetry }: InspectorProps) {
+function ResultInspector({ result, settings, audioPath, editedSummary, runConfig, onRetry }: InspectorProps) {
   const { toast } = useToast();
   const [formats, setFormats] = useState<ExportFormat[]>(["telegram", "plain", "json"]);
   const [busy, setBusy] = useState(false);
   if (!result) return null;
 
   const partial = result.status === "partial_success";
+  const mode = runConfig?.mode ?? settings.summarization.mode;
+  const basePath = result.summary_path ?? result.transcript_path ?? audioPath ?? "summary";
+  const targetDir = dirName(basePath);
 
   const toggle = (f: ExportFormat) =>
     setFormats((prev) => (prev.includes(f) ? prev.filter((x) => x !== f) : [...prev, f]));
@@ -127,7 +95,7 @@ function ResultInspector({ result, audioPath, editedSummary, overrides, onRetry 
 
   const copy = async () => {
     await navigator.clipboard.writeText(editedSummary);
-    toast("Резюме скопировано", "ok");
+    toast("Саммари скопировано", "ok");
   };
 
   const doExport = async () => {
@@ -137,16 +105,16 @@ function ResultInspector({ result, audioPath, editedSummary, overrides, onRetry 
     }
     setBusy(true);
     try {
-      const basePath = result.summary_path ?? result.transcript_path ?? audioPath ?? "summary";
       const bridge = await getBridge();
       await bridge.exportSummary({
         summary_text: editedSummary,
         formats,
-        target_dir: dirName(basePath),
+        target_dir: targetDir,
         base_name: stem(audioPath ?? basePath),
-        mode: overrides.mode,
+        mode,
       });
-      toast("Экспорт завершён", "ok");
+      toast(`Сохранено в: ${targetDir}`, "ok");
+      await bridge.revealPath(targetDir); // open the folder so it's clear where files went
     } catch (e) {
       toast(e instanceof Error ? e.message : "Ошибка экспорта", "error");
     } finally {
@@ -161,13 +129,13 @@ function ResultInspector({ result, audioPath, editedSummary, overrides, onRetry 
         rows={[
           ["Транскрипт", <span key="t" className="text-ok">{result.transcript_path ? "сохранён" : "—"}</span>],
           [
-            "Резюме",
+            "Саммари",
             <span key="s" className={partial ? "text-warn" : "text-ok"}>
               {result.summary_path ? "сохранено" : "не создано"}
             </span>,
           ],
-          ["Провайдер", overrides.provider],
-          ["Модель", overrides.model],
+          ["Провайдер", runConfig?.provider ?? "—"],
+          ["Модель", runConfig?.model ?? "—"],
         ]}
       />
 
@@ -177,7 +145,7 @@ function ResultInspector({ result, audioPath, editedSummary, overrides, onRetry 
         </Button>
       ) : (
         <Button variant="primary" size="lg" className="w-full" onClick={copy} disabled={!editedSummary}>
-          <Copy className="h-4 w-4" /> Копировать резюме
+          <Copy className="h-4 w-4" /> Копировать саммари
         </Button>
       )}
       <Button variant="secondary" size="lg" className="w-full" onClick={reveal}>
@@ -185,7 +153,7 @@ function ResultInspector({ result, audioPath, editedSummary, overrides, onRetry 
       </Button>
 
       <div className="flex flex-col gap-2 rounded-card border border-border bg-panel-soft p-3">
-        <h3 className="text-base font-semibold text-ink">Экспорт резюме</h3>
+        <h3 className="text-base font-semibold text-ink">Экспорт саммари</h3>
         {(Object.keys(EXPORT_LABELS) as ExportFormat[]).map((f) => (
           <label key={f} className="flex cursor-pointer items-center gap-2 text-base text-ink">
             <input
@@ -197,19 +165,11 @@ function ResultInspector({ result, audioPath, editedSummary, overrides, onRetry 
             {EXPORT_LABELS[f]}
           </label>
         ))}
+        <p className="text-sm text-ink-soft">Папка: {targetDir}</p>
         <Button variant="secondary" size="lg" className="w-full" onClick={doExport} disabled={busy || !editedSummary}>
           <Download className="h-4 w-4" /> Экспортировать
         </Button>
       </div>
     </>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <Label>{label}</Label>
-      {children}
-    </div>
   );
 }

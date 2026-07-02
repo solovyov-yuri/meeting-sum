@@ -63,7 +63,7 @@ export function Workspace(props: WorkspaceProps) {
             Транскрипт
           </TabButton>
           <TabButton active={tab === "summary"} onClick={() => setTab("summary")}>
-            Резюме
+            Саммари
           </TabButton>
           <TabButton active={tab === "log"} onClick={() => setTab("log")}>
             Лог
@@ -137,7 +137,7 @@ function ResultBanner({
       <div className="flex items-start gap-3 rounded-card border border-warn-line bg-warn-soft p-3">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
         <div className="flex-1">
-          <p className="text-base font-semibold text-ink">Транскрипт сохранён, но резюме не создано.</p>
+          <p className="text-base font-semibold text-ink">Транскрипт сохранён, но саммари не создано.</p>
           <p className="mt-0.5 text-sm text-warn">
             Причина: {result.error_message}. Исправьте настройки и повторите только суммаризацию.
           </p>
@@ -179,10 +179,10 @@ function SummaryTab({
   onChange: (v: string) => void;
 }) {
   if (phase !== "done" || !result || result.status === "failed") {
-    return <p className="p-3.5 text-base text-ink-muted">Резюме появится после завершения суммаризации.</p>;
+    return <p className="p-3.5 text-base text-ink-muted">Саммари появится после завершения суммаризации.</p>;
   }
   if (result.status === "partial_success") {
-    return <p className="p-3.5 text-base text-ink-muted">Резюме не создано. Исправьте настройки и повторите суммаризацию.</p>;
+    return <p className="p-3.5 text-base text-ink-muted">Саммари не создано. Исправьте настройки и повторите суммаризацию.</p>;
   }
   return (
     <div className="h-full p-3.5">
@@ -190,7 +190,7 @@ function SummaryTab({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="h-full resize-none"
-        aria-label="Редактируемое резюме"
+        aria-label="Редактируемое саммари"
       />
     </div>
   );

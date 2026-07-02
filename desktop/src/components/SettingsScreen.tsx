@@ -243,7 +243,7 @@ function SummarizationSection({ draft, update }: { draft: AppSettings; update: U
             onChange={(e) => update((d) => (d.summarization.model.base_url = e.target.value === "" ? null : e.target.value))}
           />
         </Field>
-        <Field label="Язык резюме">
+        <Field label="Язык саммари">
           <Select
             value={s.language ?? "ru"}
             options={[{ value: "ru", label: "Русский" }]}
@@ -341,7 +341,7 @@ function PathsSection({ draft, update }: { draft: AppSettings; update: UpdateFn 
         <Field label="Транскрипт" full>
           <Input value={draft.transcript} onChange={(e) => update((d) => (d.transcript = e.target.value))} />
         </Field>
-        <Field label="Резюме" full>
+        <Field label="Саммари" full>
           <Input value={draft.summary} onChange={(e) => update((d) => (d.summary = e.target.value))} />
         </Field>
       </FormGrid>

@@ -70,7 +70,7 @@ function Shell() {
     );
   }
 
-  if (!recap.settings || !recap.overrides) {
+  if (!recap.settings) {
     return <div className="flex h-full items-center justify-center text-base text-ink-muted">Загрузка…</div>;
   }
 
@@ -78,7 +78,10 @@ function Shell() {
     <div className="flex h-full overflow-hidden">
       <Sidebar
         view={view}
-        onNewRun={() => setView("run")}
+        onNewRun={() => {
+          recap.newRun();
+          setView("run");
+        }}
         onOpenHistory={() => setView("run")}
         onOpenSettings={() => setView("settings")}
         history={recap.history}
@@ -111,8 +114,7 @@ function Shell() {
             phase={recap.phase}
             result={recap.result}
             settings={recap.settings}
-            overrides={recap.overrides}
-            setOverrides={recap.setOverrides}
+            runConfig={recap.runConfig}
             audioPath={recap.audioPath}
             editedSummary={recap.editedSummary}
             onRetry={recap.retrySummarization}

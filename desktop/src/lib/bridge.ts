@@ -284,7 +284,7 @@ function browserBridge(): Bridge {
           path: null,
         });
         await delay(700);
-        emit({ step: "summarize", status: "success", message: "Резюме готово.", percent: null, path: null });
+        emit({ step: "summarize", status: "success", message: "Саммари готово.", percent: null, path: null });
         emit({ step: "export", status: "running", message: "Сохранение результатов…", percent: null, path: null });
         await delay(250);
         emit({ step: "export", status: "success", message: `Готово: ${summaryPath}`, percent: null, path: summaryPath });
@@ -338,7 +338,7 @@ function browserBridge(): Bridge {
       } else {
         onProgress({ step: "summarize", status: "running", message: `Суммаризация началась: ${provider}.`, percent: null, path: null });
         await delay(700);
-        onProgress({ step: "summarize", status: "success", message: "Резюме готово.", percent: null, path: null });
+        onProgress({ step: "summarize", status: "success", message: "Саммари готово.", percent: null, path: null });
         onProgress({ step: "export", status: "success", message: `Готово: ${summaryPath}`, percent: null, path: summaryPath });
         files[summaryPath] = MOCK_SUMMARY;
         result = {
