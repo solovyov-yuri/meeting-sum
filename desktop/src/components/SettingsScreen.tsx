@@ -1,19 +1,20 @@
-import { Loader2 } from "lucide-react";
+import { HelpCircle, Loader2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Segmented, Select, Switch } from "@/components/ui/controls";
 import { useToast } from "@/components/ui/toast";
 import { getBridge } from "@/lib/bridge";
-import { isExternalProvider } from "@/lib/providers";
+import { isExternalProvider, PROVIDER_BASE_URLS } from "@/lib/providers";
 import type { AppSettings, ChunkingMode, ComputeType, SummaryMode, SummaryProvider, WhisperDevice } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type SectionId = "transcription" | "summarization" | "preprocessing" | "paths" | "privacy" | "keys";
 
+// Tabs follow the pipeline order: preprocess → transcribe → summarize, then general settings.
 const SECTIONS: { id: SectionId; label: string }[] = [
+  { id: "preprocessing", label: "Предобработка" },
   { id: "transcription", label: "Транскрибация" },
   { id: "summarization", label: "Суммаризация" },
-  { id: "preprocessing", label: "Предобработка" },
   { id: "paths", label: "Пути" },
   { id: "privacy", label: "Приватность" },
   { id: "keys", label: "Ключи API" },
@@ -124,17 +125,26 @@ function FormGrid({ children }: { children: React.ReactNode }) {
 function Field({
   label,
   hint,
+  tooltip,
   full,
   children,
 }: {
   label: string;
   hint?: string;
+  tooltip?: string;
   full?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <div className={cn("flex flex-col gap-1.5", full && "col-span-2")}>
-      <Label>{label}</Label>
+      <div className="flex items-center gap-1">
+        <Label>{label}</Label>
+        {tooltip && (
+          <span title={tooltip} aria-label={tooltip} className="cursor-help text-ink-soft hover:text-ink-muted">
+            <HelpCircle className="h-3.5 w-3.5" />
+          </span>
+        )}
+      </div>
       {children}
       {hint && <span className="text-sm text-ink-soft">{hint}</span>}
     </div>
@@ -171,7 +181,7 @@ function TranscriptionSection({ draft, update }: { draft: AppSettings; update: U
     <div>
       <SectionTitle>Настройки транскрибации</SectionTitle>
       <FormGrid>
-        <Field label="Язык">
+        <Field label="Язык" tooltip="На каком языке говорят в записи. «Авто» — определить автоматически.">
           <Select
             value={t.language}
             options={[
@@ -182,10 +192,10 @@ function TranscriptionSection({ draft, update }: { draft: AppSettings; update: U
             onChange={(e) => update((d) => (d.transcription.language = e.target.value))}
           />
         </Field>
-        <Field label="Модель">
+        <Field label="Модель" tooltip="Размер модели Whisper: крупнее — точнее, но медленнее (напр. large-v3).">
           <Input value={t.model.name} onChange={(e) => update((d) => (d.transcription.model.name = e.target.value))} />
         </Field>
-        <Field label="Устройство">
+        <Field label="Устройство" tooltip="Где выполнять распознавание: CUDA — видеокарта (быстро), CPU — процессор (медленно).">
           <Select
             value={t.model.device}
             options={[
@@ -196,20 +206,20 @@ function TranscriptionSection({ draft, update }: { draft: AppSettings; update: U
             onChange={(e) => update((d) => (d.transcription.model.device = e.target.value as WhisperDevice))}
           />
         </Field>
-        <Field label="Точность (compute type)">
+        <Field label="Точность (compute type)" tooltip="Формат вычислений. float16 — быстро на GPU, int8 — экономит память.">
           <Select
             value={t.model.compute_type}
             options={["default", "float16", "int8", "int8_float16", "float32"].map((v) => ({ value: v, label: v }))}
             onChange={(e) => update((d) => (d.transcription.model.compute_type = e.target.value as ComputeType))}
           />
         </Field>
-        <Field label="Beam size">
+        <Field label="Beam size" tooltip="Сколько вариантов распознавания перебирать. Больше — точнее, но медленнее.">
           {numberInput(t.model.beam_size, (n) => update((d) => (d.transcription.model.beam_size = n)), { min: 1 })}
         </Field>
-        <Field label="VAD-фильтр" hint="Пропускать тишину">
+        <Field label="VAD-фильтр" tooltip="Пропускать участки тишины, чтобы ускорить распознавание." hint="Пропускать тишину">
           <Switch checked={t.model.vad_filter} onChange={(v) => update((d) => (d.transcription.model.vad_filter = v))} />
         </Field>
-        <Field label="Учитывать контекст" hint="condition_on_previous_text">
+        <Field label="Учитывать контекст" tooltip="Опираться на предыдущие фразы для связности (иногда повторяет ошибки).">
           <Switch
             checked={t.model.condition_on_previous_text}
             onChange={(v) => update((d) => (d.transcription.model.condition_on_previous_text = v))}
@@ -226,31 +236,36 @@ function SummarizationSection({ draft, update }: { draft: AppSettings; update: U
     <div>
       <SectionTitle>Настройки суммаризации</SectionTitle>
       <FormGrid>
-        <Field label="Провайдер">
+        <Field label="Провайдер" tooltip="Сервис, делающий саммари. openai/xai — облачные; ollama/lm-studio/vllm — локальные.">
           <Select
             value={s.model.provider}
             options={["openai", "xai", "ollama", "lm-studio", "vllm"].map((v) => ({ value: v, label: v }))}
             onChange={(e) => update((d) => (d.summarization.model.provider = e.target.value as SummaryProvider))}
           />
         </Field>
-        <Field label="Модель">
+        <Field label="Модель" tooltip="Название модели у провайдера (напр. gpt-4o, llama3).">
           <Input value={s.model.name} onChange={(e) => update((d) => (d.summarization.model.name = e.target.value))} />
         </Field>
-        <Field label="Base URL" full>
+        <Field
+          label="Base URL"
+          full
+          tooltip="Адрес сервера провайдера. Обычно оставьте пустым — подставится значение по умолчанию."
+          hint={`По умолчанию для «${s.model.provider}»: ${PROVIDER_BASE_URLS[s.model.provider] ?? "—"}`}
+        >
           <Input
             value={s.model.base_url ?? ""}
-            placeholder="по умолчанию для провайдера"
+            placeholder={PROVIDER_BASE_URLS[s.model.provider] ?? "по умолчанию для провайдера"}
             onChange={(e) => update((d) => (d.summarization.model.base_url = e.target.value === "" ? null : e.target.value))}
           />
         </Field>
-        <Field label="Язык саммари">
+        <Field label="Язык саммари" tooltip="На каком языке писать саммари.">
           <Select
             value={s.language ?? "ru"}
             options={[{ value: "ru", label: "Русский" }]}
             onChange={(e) => update((d) => (d.summarization.language = e.target.value))}
           />
         </Field>
-        <Field label="Режим">
+        <Field label="Режим" tooltip="Объём саммари: краткий, средний или подробный протокол.">
           <Segmented<SummaryMode>
             value={s.mode}
             onChange={(mode) => update((d) => (d.summarization.mode = mode))}
@@ -261,7 +276,7 @@ function SummarizationSection({ draft, update }: { draft: AppSettings; update: U
             ]}
           />
         </Field>
-        <Field label="Chunking">
+        <Field label="Chunking" tooltip="Длинные встречи: chunk — обрабатывать по частям, truncate — обрезать до лимита.">
           <Segmented<ChunkingMode>
             value={s.chunking_mode}
             onChange={(mode) => update((d) => (d.summarization.chunking_mode = mode))}
@@ -271,16 +286,16 @@ function SummarizationSection({ draft, update }: { draft: AppSettings; update: U
             ]}
           />
         </Field>
-        <Field label="Макс. символов">
+        <Field label="Макс. символов" tooltip="Максимум символов транскрипта, отправляемых модели за один запрос.">
           {numberInput(s.max_transcript_chars, (n) => update((d) => (d.summarization.max_transcript_chars = n)), { min: 1 })}
         </Field>
-        <Field label="Timeout (сек)">
+        <Field label="Timeout (сек)" tooltip="Сколько секунд ждать ответ модели, прежде чем прервать.">
           {numberInput(s.timeout_seconds, (n) => update((d) => (d.summarization.timeout_seconds = n)), { min: 1 })}
         </Field>
-        <Field label="Retries">
+        <Field label="Retries" tooltip="Сколько раз повторить запрос при ошибке.">
           {numberInput(s.retries, (n) => update((d) => (d.summarization.retries = n)), { min: 0 })}
         </Field>
-        <Field label="num_ctx" hint="Только Ollama">
+        <Field label="num_ctx" tooltip="Размер контекстного окна модели в Ollama (в токенах)." hint="Только Ollama">
           {nullableNumberInput(s.model.num_ctx, (v) => update((d) => (d.summarization.model.num_ctx = v)))}
         </Field>
       </FormGrid>
@@ -294,19 +309,19 @@ function PreprocessingSection({ draft, update }: { draft: AppSettings; update: U
     <div>
       <SectionTitle>Предобработка аудио</SectionTitle>
       <FormGrid>
-        <Field label="Включить" hint="Требуется ffmpeg">
+        <Field label="Включить" tooltip="Готовить аудио перед распознаванием (конвертация, нормализация). Нужен ffmpeg." hint="Требуется ffmpeg">
           <Switch checked={p.enabled} onChange={(v) => update((d) => (d.preprocessing.enabled = v))} />
         </Field>
-        <Field label="Нормализация громкости" hint="EBU R128 loudnorm">
+        <Field label="Нормализация громкости" tooltip="Выровнять громкость, чтобы тихие голоса были слышны." hint="EBU R128 loudnorm">
           <Switch
             checked={p.loudness_normalization}
             onChange={(v) => update((d) => (d.preprocessing.loudness_normalization = v))}
           />
         </Field>
-        <Field label="Частота (Hz)">
+        <Field label="Частота (Hz)" tooltip="Частота дискретизации. Для речи достаточно 16000 Гц.">
           {numberInput(p.sample_rate, (n) => update((d) => (d.preprocessing.sample_rate = n)), { min: 1 })}
         </Field>
-        <Field label="Каналы">
+        <Field label="Каналы" tooltip="Моно (1) обычно достаточно для речи и меньше по размеру.">
           <Select
             value={String(p.channels)}
             options={[
@@ -316,13 +331,13 @@ function PreprocessingSection({ draft, update }: { draft: AppSettings; update: U
             onChange={(e) => update((d) => (d.preprocessing.channels = Number(e.target.value)))}
           />
         </Field>
-        <Field label="Target LUFS">{numberInput(p.target_lufs, (n) => update((d) => (d.preprocessing.target_lufs = n)))}</Field>
-        <Field label="True peak (dBTP)">{numberInput(p.true_peak_db, (n) => update((d) => (d.preprocessing.true_peak_db = n)))}</Field>
-        <Field label="Loudness range">{numberInput(p.loudness_range, (n) => update((d) => (d.preprocessing.loudness_range = n)))}</Field>
-        <Field label="High-pass (Hz)" hint="Пусто — выкл">
+        <Field label="Target LUFS" tooltip="Целевая громкость по стандарту EBU R128 (обычно −16…−23).">{numberInput(p.target_lufs, (n) => update((d) => (d.preprocessing.target_lufs = n)))}</Field>
+        <Field label="True peak (dBTP)" tooltip="Максимальный пик громкости, чтобы избежать перегруза.">{numberInput(p.true_peak_db, (n) => update((d) => (d.preprocessing.true_peak_db = n)))}</Field>
+        <Field label="Loudness range" tooltip="Допустимый разброс громкости.">{numberInput(p.loudness_range, (n) => update((d) => (d.preprocessing.loudness_range = n)))}</Field>
+        <Field label="High-pass (Hz)" tooltip="Срезать низкие частоты (гул). Пусто — выключено." hint="Пусто — выкл">
           {nullableNumberInput(p.highpass_hz, (v) => update((d) => (d.preprocessing.highpass_hz = v)))}
         </Field>
-        <Field label="Хранить temp-файл">
+        <Field label="Хранить temp-файл" tooltip="Не удалять подготовленный аудио-файл после обработки.">
           <Switch checked={p.keep_temp} onChange={(v) => update((d) => (d.preprocessing.keep_temp = v))} />
         </Field>
       </FormGrid>
@@ -355,7 +370,7 @@ function PrivacySection({ draft, update }: { draft: AppSettings; update: UpdateF
     <div>
       <SectionTitle>Приватность</SectionTitle>
       <FormGrid>
-        <Field label="Согласие на отправку" hint="privacy_ack">
+        <Field label="Согласие на отправку" tooltip="Разрешить отправку текста транскрипта внешнему провайдеру без предупреждения.">
           <Switch checked={draft.privacy_ack} onChange={(v) => update((d) => (d.privacy_ack = v))} />
         </Field>
       </FormGrid>
