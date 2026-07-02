@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 from config import Settings
 
 if TYPE_CHECKING:
+    from providers.llm import LLMSummarizer
     from transcript import Transcript
 
 logger = logging.getLogger(__name__)
@@ -103,7 +104,7 @@ def humanize_error(exc: BaseException) -> str:
     detail = str(exc).strip()
     if name in ("APITimeoutError", "Timeout", "TimeoutError"):
         return "Превышено время ожидания ответа модели."
-    if name in ("APIConnectionError", "ConnectionError", "APIConnectionError"):
+    if name in ("APIConnectionError", "ConnectionError"):
         return "Не удалось подключиться к LLM-провайдеру. Проверьте адрес и доступность сервиса."
     if name == "AuthenticationError" or "api key" in detail.lower() or "api_key" in detail.lower():
         return "Ошибка авторизации LLM: проверьте сохранённый ключ API."
@@ -112,56 +113,6 @@ def humanize_error(exc: BaseException) -> str:
     if not detail:
         return f"Произошла ошибка ({name})."
     return detail
-
-
-def transcribe_audio(
-    settings: Settings,
-    audio_path: Path,
-    language: str | None = None,
-    *,
-    progress: ProgressCallback | None = None,
-) -> Transcript:
-    """Preprocess (if enabled) and transcribe one file. Returns a ``Transcript``.
-
-    Provider exceptions propagate; this function does not swallow them.
-    """
-    from preprocessing import prepared_audio  # noqa: PLC0415
-    from providers.factory import make_transcriber  # noqa: PLC0415
-
-    emit = progress if progress is not None else _noop
-    lang = language or settings.transcription.language
-
-    transcriber = make_transcriber(settings)
-
-    if settings.preprocessing.enabled:
-        emit(ProgressEvent(STEP_PREPROCESS, "running", "Предобработка аудио…"))
-    with prepared_audio(audio_path, settings.preprocessing) as prepared:
-        if settings.preprocessing.enabled:
-            emit(ProgressEvent(STEP_PREPROCESS, "success", "Аудио подготовлено."))
-        emit(ProgressEvent(STEP_TRANSCRIBE, "running", "Транскрибация началась."))
-        return transcriber.transcribe(prepared, lang)
-
-
-def summarize_transcript(
-    settings: Settings,
-    transcript_text: str,
-    *,
-    provider: str,
-    mode: str,
-    model_override: str | None = None,
-    summary_language: str | None = None,
-    progress: ProgressCallback | None = None,
-) -> str:
-    """Build a summarizer through the factory and return the raw LLM summary.
-
-    ``ValueError`` (unknown provider/mode/language) and provider exceptions propagate.
-    """
-    from providers.factory import make_summarizer  # noqa: PLC0415
-
-    emit = progress if progress is not None else _noop
-    summarizer = make_summarizer(settings, provider, mode, model_override, summary_language)
-    emit(ProgressEvent(STEP_SUMMARIZE, "running", f"Суммаризация началась: {provider}."))
-    return summarizer.summarize(transcript_text)
 
 
 def _ensure_parent(path: Path) -> None:
@@ -218,9 +169,10 @@ def run_one_file(
         supported = ", ".join(sorted(ext.lstrip(".").upper() for ext in AUDIO_EXTENSIONS))
         return failed(STEP_PREPROCESS, f"Неподдерживаемый формат аудио: {audio_path.suffix}. Поддерживаются: {supported}.")
 
-    # Validate provider/mode/language early (raises ValueError → user-facing message).
+    # Build the summarizer once, up front (validates provider/mode/language: raises ValueError).
+    # The same instance is reused in _summarize_and_export — no second construction.
     try:
-        make_summarizer(settings, provider_name, mode_name, options.model, options.summary_language)
+        summarizer = make_summarizer(settings, provider_name, mode_name, options.model, options.summary_language)
     except ValueError as exc:
         return failed(STEP_SUMMARIZE, str(exc))
 
@@ -278,6 +230,7 @@ def run_one_file(
     return _summarize_and_export(
         settings,
         transcript,
+        summarizer=summarizer,
         options=options,
         provider_name=provider_name,
         mode_name=mode_name,
@@ -293,6 +246,7 @@ def _summarize_and_export(
     settings: Settings,
     transcript: Transcript,
     *,
+    summarizer: LLMSummarizer,
     options: RunOptions,
     provider_name: str,
     mode_name: str,
@@ -304,18 +258,17 @@ def _summarize_and_export(
 ) -> RunResult:
     """Summarize an in-memory transcript and write the .txt/.json summaries.
 
-    Shared by ``run_one_file`` and ``resummarize_one``. On LLM/IO failure returns
-    ``partial_success`` with the transcript paths preserved.
+    Shared by ``run_one_file`` and ``resummarize_one``, which build the ``summarizer`` once
+    (during early validation) and hand it in. On LLM/IO failure returns ``partial_success``
+    with the transcript paths preserved.
     """
     from formatters import to_json, to_telegram  # noqa: PLC0415
     from models import MeetingSummary  # noqa: PLC0415
-    from providers.factory import make_summarizer  # noqa: PLC0415
     from utils import write_text_atomic  # noqa: PLC0415
 
     model_label = options.model or settings.summarization.model.name
     emit(ProgressEvent(STEP_SUMMARIZE, "running", f"Суммаризация началась: {provider_name} / {model_label}."))
     try:
-        summarizer = make_summarizer(settings, provider_name, mode_name, options.model, options.summary_language)
         raw = summarizer.summarize(transcript.to_text())
     except Exception as exc:
         logger.exception("Summarization failed")
@@ -379,7 +332,7 @@ def resummarize_one(
         return RunResult("failed", None, None, None, None, None, msg)
 
     try:
-        make_summarizer(settings, provider_name, mode_name, options.model, options.summary_language)
+        summarizer = make_summarizer(settings, provider_name, mode_name, options.model, options.summary_language)
     except ValueError as exc:
         emit(ProgressEvent(STEP_SUMMARIZE, "error", str(exc)))
         return RunResult("failed", transcript_path, None, None, None, None, str(exc))
@@ -408,6 +361,7 @@ def resummarize_one(
     return _summarize_and_export(
         settings,
         transcript,
+        summarizer=summarizer,
         options=options,
         provider_name=provider_name,
         mode_name=mode_name,
