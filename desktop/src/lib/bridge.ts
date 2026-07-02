@@ -162,6 +162,29 @@ function browserBridge(): Bridge {
   const files: Record<string, string> = {};
   let cancelled = false;
 
+  const pushHistory = (req: RunRequest, result: RunResult, provider: string, name: string) => {
+    history = [
+      {
+        id: crypto.randomUUID(),
+        created_at: new Date().toISOString(),
+        audio_path: req.audio_path,
+        audio_name: name,
+        status: result.status,
+        transcript_path: result.transcript_path,
+        summary_path: result.summary_path,
+        summary_json_path: result.summary_json_path,
+        provider,
+        model: req.overrides?.model ?? settings.summarization.model.name,
+        mode: req.overrides?.mode ?? settings.summarization.mode,
+        transcription_language: settings.transcription.language,
+        summary_language: settings.summarization.language,
+        duration_seconds: null,
+        error_message: result.error_message,
+      },
+      ...history,
+    ];
+  };
+
   return {
     async getSettings() {
       const s = structuredClone(settings);
@@ -275,26 +298,7 @@ function browserBridge(): Bridge {
         };
       }
 
-      history = [
-        {
-          id: crypto.randomUUID(),
-          created_at: new Date().toISOString(),
-          audio_path: req.audio_path,
-          audio_name: name,
-          status: result.status,
-          transcript_path: result.transcript_path,
-          summary_path: result.summary_path,
-          summary_json_path: result.summary_json_path,
-          provider,
-          model: req.overrides?.model ?? settings.summarization.model.name,
-          mode: req.overrides?.mode ?? settings.summarization.mode,
-          transcription_language: settings.transcription.language,
-          summary_language: settings.summarization.language,
-          duration_seconds: null,
-          error_message: result.error_message,
-        },
-        ...history,
-      ];
+      pushHistory(req, result, provider, name);
       return result;
     },
     async resummarize(req, onProgress) {
@@ -345,26 +349,7 @@ function browserBridge(): Bridge {
           error_message: null,
         };
       }
-      history = [
-        {
-          id: crypto.randomUUID(),
-          created_at: new Date().toISOString(),
-          audio_path: req.audio_path,
-          audio_name: name,
-          status: result.status,
-          transcript_path: result.transcript_path,
-          summary_path: result.summary_path,
-          summary_json_path: result.summary_json_path,
-          provider,
-          model: req.overrides?.model ?? settings.summarization.model.name,
-          mode: req.overrides?.mode ?? settings.summarization.mode,
-          transcription_language: settings.transcription.language,
-          summary_language: settings.summarization.language,
-          duration_seconds: null,
-          error_message: result.error_message,
-        },
-        ...history,
-      ];
+      pushHistory(req, result, provider, name);
       return result;
     },
     async pickAudioFile() {
