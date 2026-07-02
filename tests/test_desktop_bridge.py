@@ -33,6 +33,8 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture()
 def patch_factory(monkeypatch: pytest.MonkeyPatch) -> None:
+    import contextlib
+
     import providers.factory as factory_mod
 
     monkeypatch.setattr(factory_mod, "make_transcriber", lambda settings: FakeTranscriber())
@@ -41,6 +43,13 @@ def patch_factory(monkeypatch: pytest.MonkeyPatch) -> None:
         "make_summarizer",
         lambda settings, provider, mode, model_override=None, summary_language=None: FakeSummarizer(),
     )
+
+    # Full mode now force-preprocesses; stub ffmpeg so run tests don't touch the fake .wav.
+    @contextlib.contextmanager
+    def _fake_prepared(audio, cfg):  # type: ignore[no-untyped-def]
+        yield audio
+
+    monkeypatch.setattr("preprocessing.prepared_audio", _fake_prepared)
 
 
 # ── settings ──────────────────────────────────────────────────────────────────
@@ -329,6 +338,37 @@ def test_test_connection_external_without_key() -> None:
 def test_test_connection_unknown_provider() -> None:
     res = desktop_bridge.test_connection("grok")
     assert res["ok"] is False
+
+
+# ── run_mode (transcribe-only / preprocess-only) ────────────────────────────────
+
+
+def test_run_recap_transcribe_mode_skips_summary(tmp_path: Path, patch_factory: None, data_dir: Path) -> None:
+    audio = tmp_path / "meeting.wav"
+    audio.write_bytes(b"RIFF" + b"\x00" * 32)
+    payload = {
+        "audio_path": str(audio),
+        "transcript_path": str(tmp_path / "tr.txt"),
+        "summary_path": str(tmp_path / "sum.txt"),
+        "run_mode": "transcribe",
+        "overrides": {"provider": "ollama"},
+    }
+    result = desktop_bridge.run_recap(payload, emit=lambda e: None)
+    assert result.status == "success"
+    assert (tmp_path / "tr.txt").exists()
+    assert result.summary_path is None
+    assert not (tmp_path / "sum.txt").exists()
+
+
+def test_run_recap_preprocess_mode(tmp_path: Path, data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    audio = tmp_path / "meeting.wav"
+    audio.write_bytes(b"RIFF" + b"\x00" * 32)
+    monkeypatch.setattr("preprocessing.preprocess_audio", lambda inp, out, cfg: out.write_bytes(b"x"))
+    result = desktop_bridge.run_recap({"audio_path": str(audio), "run_mode": "preprocess"}, emit=lambda e: None)
+    assert result.status == "success"
+    assert result.output_path is not None
+    assert result.output_path.name == "meeting.preprocessed.wav"
+    assert result.output_path.exists()
 
 
 # ── list_models ─────────────────────────────────────────────────────────────────

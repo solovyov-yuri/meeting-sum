@@ -189,6 +189,7 @@ def _result_to_dict(result: workflows.RunResult) -> dict[str, Any]:
         "transcript_text": result.transcript_text,
         "summary_text": result.summary_text,
         "error_message": result.error_message,
+        "output_path": _str_or_none(result.output_path),
     }
 
 
@@ -461,10 +462,11 @@ def export_summary(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _build_run_options(payload: dict[str, Any]) -> RunOptions:
     overrides = payload.get("overrides") or {}
+    audio_path = payload.get("audio_path")  # absent for standalone summarize (input is a transcript)
     transcript_path = payload.get("transcript_path")
     summary_path = payload.get("summary_path")
     return RunOptions(
-        audio_path=Path(payload["audio_path"]),
+        audio_path=Path(audio_path) if audio_path else None,
         transcript_path=Path(transcript_path) if transcript_path else None,
         summary_path=Path(summary_path) if summary_path else None,
         transcription_language=overrides.get("transcription_language"),
@@ -528,12 +530,33 @@ def run_recap(
     provider = options.provider or settings.summarization.model.provider
     settings = _settings_with_api_key(settings, provider)
 
-    _maybe_emit_privacy_warning(settings, provider, emit)
+    # run_mode selects the pipeline slice (default "full"). "summarize" is a separate command
+    # (resummarize). NOTE: distinct from options.mode, which is the *summary* mode (brief/medium/…).
+    run_mode = payload.get("run_mode", "full")
 
-    result = workflows.run_one_file(
-        options, settings=settings, progress=emit, cancel=cancel, transcriber_factory=transcriber_factory
-    )
-    _record_history(options, provider, settings, result)
+    if run_mode == "preprocess":
+        result = workflows.preprocess_one(options, settings=settings, progress=emit)
+    elif run_mode == "transcribe":
+        result = workflows.run_one_file(
+            options,
+            settings=settings,
+            progress=emit,
+            cancel=cancel,
+            transcriber_factory=transcriber_factory,
+            stop_after="transcribe",
+        )
+    else:  # full — summarization sends the transcript out, so warn; preprocessing is mandatory.
+        _maybe_emit_privacy_warning(settings, provider, emit)
+        result = workflows.run_one_file(
+            options,
+            settings=settings,
+            progress=emit,
+            cancel=cancel,
+            transcriber_factory=transcriber_factory,
+            force_preprocess=True,
+        )
+
+    _record_history(options, provider, settings, result, run_mode=run_mode)
     return result
 
 
@@ -555,20 +578,22 @@ def resummarize(
     _maybe_emit_privacy_warning(settings, provider, emit)
 
     result = workflows.resummarize_one(options, settings=settings, progress=emit)
-    _record_history(options, provider, settings, result)
+    _record_history(options, provider, settings, result, run_mode="summarize")
     return result
 
 
 def _record_history(
-    options: RunOptions, provider: str, settings: Settings, result: workflows.RunResult
+    options: RunOptions, provider: str, settings: Settings, result: workflows.RunResult, run_mode: str = "full"
 ) -> None:
     """Append a history entry (paths + metadata only — never transcript/summary text)."""
     entry = {
         "id": str(uuid.uuid4()),
         "created_at": datetime.now().astimezone().isoformat(),
+        "run_mode": run_mode,
         "audio_path": str(options.audio_path) if options.audio_path else "",
         "audio_name": options.audio_path.name if options.audio_path else "",
         "status": result.status,
+        "output_path": _str_or_none(result.output_path),
         "transcript_path": _str_or_none(result.transcript_path),
         "summary_path": _str_or_none(result.summary_path),
         "summary_json_path": _str_or_none(result.summary_json_path),

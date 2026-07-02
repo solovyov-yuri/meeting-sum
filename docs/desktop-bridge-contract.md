@@ -39,6 +39,7 @@ class RunResult:
     transcript_text: str | None
     summary_text: str | None
     error_message: str | None = None
+    output_path: Path | None = None  # preprocess-only: the produced *.preprocessed.wav
 ```
 
 Допустимые `step`:
@@ -211,6 +212,7 @@ Input:
 
 ```json
 {
+  "run_mode": "full",
   "audio_path": "C:/meetings/meeting.mp3",
   "transcript_path": null,
   "summary_path": null,
@@ -223,6 +225,16 @@ Input:
   }
 }
 ```
+
+`run_mode` selects the pipeline slice (default `"full"`) — **distinct from `overrides.mode`**, which is
+the *summary* mode (brief/medium/detailed):
+
+- `"full"` — preprocess (forced on) → transcribe → summarize → export.
+- `"transcribe"` — preprocess → transcribe only; returns `success` with the transcript written and no
+  summary (empty transcript is success-with-warning). No summarization key required.
+- `"preprocess"` — ffmpeg only; writes `<output_dir|audio-dir>/<stem>.preprocessed.wav`, returned on
+  `output_path` and the success event's `path`. `audio_path` is required for these three.
+- Standalone `"summarize"` is the separate `resummarize` command (input is a transcript, not audio).
 
 Progress events:
 
@@ -246,9 +258,12 @@ Final output:
   "summary_json_path": "C:/.../summary.json",
   "transcript_text": "...",
   "summary_text": "...",
-  "error_message": null
+  "error_message": null,
+  "output_path": null
 }
 ```
+
+`output_path` is set only by `run_mode: "preprocess"` (the produced `*.preprocessed.wav`); otherwise null.
 
 ### `serve` — persistent warm-model worker (PERF-001)
 
