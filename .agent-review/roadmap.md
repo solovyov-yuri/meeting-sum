@@ -15,7 +15,7 @@
 | [SEC-001](issues/SEC-001.md) | Живой API-ключ в открытом виде в config.yaml | high | quick-win | done | 2026-07-02: ключ убран из config.yaml, старый ротирован, ключ через env |
 | [REL-001](issues/REL-001.md) | UnicodeDecodeError не перехватывается при чтении транскрипта | high | quick-win | done | 2026-07-02: ловим (OSError, UnicodeDecodeError) в cli.py+workflows.py; тесты на оба пути |
 | [REL-004](issues/REL-004.md) | Десктоп отклоняет .mp4 — реальный формат пользователя | high | quick-win | done | 2026-07-02: общая AUDIO_EXTENSIONS (+mp4/mkv/webm/flac), синк bridge.ts; drag-in-app вручную не проверял |
-| [ARCH-002](issues/ARCH-002.md) | Отмена: kill вместо кооперативной; потеря истории/транскрипта | high | small | in-progress | кооперативная отмена реализована; Rust-половина не скомпилирована здесь — нужна сборка/тест |
+| [ARCH-002](issues/ARCH-002.md) | Отмена: kill вместо кооперативной; потеря истории/транскрипта | high | small | in-progress | Python+тесты; Rust компилируется+clippy чисто (cargo.exe из WSL); остался ручной тест «Остановить» в app |
 | [AGENT-001](issues/AGENT-001.md) | Скилл project-review: нет references/assets; 3 копии | high | small | done | 2026-07-02: скилл сделан глобальным (Windows-home канонический + symlink в WSL-home), 5 файлов references/assets созданы, проектная копия удалена |
 | [AGENT-002](issues/AGENT-002.md) | CLAUDE.md/AGENTS.md: desktop-слой невидим, ложное правило boundary | high | small | done | 2026-07-02: карта +workflows/desktop_bridge/secrets_store/desktop; 3 boundary вместо ложного одного |
 | [AGENT-006](issues/AGENT-006.md) | Ложный отчёт о верификации; правила нет в checked-in файлах | high | small | done | 2026-07-02: правило честной верификации добавлено в AGENTS.md |
@@ -25,7 +25,7 @@
 | [SEC-002](issues/SEC-002.md) | CSP отключён в Tauri | medium | quick-win | in-progress | 2026-07-02: строгий CSP задан; не проверен в webview (dev+prod) |
 | [SEC-004](issues/SEC-004.md) | Скрытый fallback на OPENAI_API_KEY через SDK | medium | quick-win | done | 2026-07-02: factory требует ключ для внешних провайдеров; тесты (в т.ч. с OPENAI_API_KEY в env) |
 | [REL-002](issues/REL-002.md) | ffmpeg без -nostdin и timeout | medium | quick-win | done | 2026-07-02: -nostdin+DEVNULL+timeout→PreprocessingError; тесты |
-| [REL-003](issues/REL-003.md) | Консольное окно мигает на каждый вызов моста (Windows) | medium | quick-win | in-progress | 2026-07-02: CREATE_NO_WINDOW в bridge_command; Rust не скомпилирован здесь |
+| [REL-003](issues/REL-003.md) | Консольное окно мигает на каждый вызов моста (Windows) | medium | quick-win | in-progress | 2026-07-02: CREATE_NO_WINDOW; cargo check+clippy чисто; остался ручной тест «нет мигания» в app |
 | [CODE-005](issues/CODE-005.md) | test_connection: черновой провайдер × сохранённый base_url | medium | quick-win | done | 2026-07-02: saved base_url только если провайдер совпадает, иначе preset; тест |
 | [DOC-001](issues/DOC-001.md) | Контракт моста: нет test_connection/read_text/resummarize/cancel | medium | quick-win | done | 2026-07-02: §4 дополнен resummarize(стрим)/test_connection/read_text; cancel — в §6 (ARCH-002) |
 | [AGENT-003](issues/AGENT-003.md) | CLAUDE.md и AGENTS.md — дубликаты байт-в-байт | medium | quick-win | in-progress | 2026-07-02: AGENTS.md канонический, CLAUDE.md=@AGENTS.md; нужен взгляд в свежей сессии (импорт грузится) |
@@ -101,3 +101,8 @@ i18n сообщений и смены семантики выходных фай
 транскрипция трактуется по-разному в `batch` (успех) vs `run`/`run_one_file` (ошибка) — унификация
 изменит поведение `batch`. pytest 310, ruff/mypy зелёные, фронт tsc+eslint чисто, CLI-путь summarize
 проверен вживую (чистая ошибка LLM + exit 1).
+
+2026-07-02 — Rust verifiability — исправлено заблуждение: Windows `cargo.exe` доступен из WSL
+(`/mnt/c/Users/solov/.cargo/bin/cargo.exe`). `cargo check`+`clippy` на desktop/src-tauri проходят чисто
+(~5с, deps в target/). ARCH-002/REL-003: компиляция Rust ПРОВЕРЕНА здесь; непроверенным остаётся только
+поведение в запущенном app. AGENTS.md (граница проверок) исправлен; 2 пред-существующих clippy-варнинга убраны.
