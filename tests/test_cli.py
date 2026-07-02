@@ -96,6 +96,10 @@ def test_run_saves_transcript_before_llm_failure(tmp_path: Path, monkeypatch: py
 
     fake_tr = Transcript(segments=(Segment(start=0.0, end=1.0, text="hello"),))
 
+    # Repo config.yaml uses the external openai provider; give it a dummy key so the
+    # factory's external-provider key check passes and the LLM path is exercised.
+    monkeypatch.setenv("RECAP_SUMMARIZATION_MODEL_API_KEY", "test-key")
+
     import providers.llm as llm_mod
     import providers.whisper as whisper_mod
 
@@ -127,6 +131,9 @@ def test_run_saves_transcript_before_llm_failure(tmp_path: Path, monkeypatch: py
 def test_privacy_warning_for_openai(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     transcript = tmp_path / "t.txt"
     transcript.write_text("[00:00] hello world\n", encoding="utf-8")
+
+    # openai is external — supply a dummy key so the factory's key check passes.
+    monkeypatch.setenv("RECAP_SUMMARIZATION_MODEL_API_KEY", "test-key")
 
     import providers.llm as llm_mod
 
@@ -180,6 +187,8 @@ def test_run_empty_transcription_saves_transcript_and_exits(tmp_path: Path, monk
     from transcript import Transcript
 
     empty_tr = Transcript(segments=())
+    # Repo config.yaml uses the external openai provider; supply a dummy key.
+    monkeypatch.setenv("RECAP_SUMMARIZATION_MODEL_API_KEY", "test-key")
     monkeypatch.setattr(whisper_mod.WhisperTranscriber, "__init__", lambda self, **kwargs: None)
     monkeypatch.setattr(whisper_mod.WhisperTranscriber, "transcribe", lambda self, audio, language="ru": empty_tr)
 
@@ -235,7 +244,10 @@ def test_batch_missing_folder(tmp_path: Path) -> None:
     assert "not found" in result.output.lower()
 
 
-def test_batch_empty_folder(tmp_path: Path) -> None:
+def test_batch_empty_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Repo config.yaml uses the external openai provider; supply a dummy key so
+    # validation passes and we reach the "No audio files" branch.
+    monkeypatch.setenv("RECAP_SUMMARIZATION_MODEL_API_KEY", "test-key")
     result = runner.invoke(app, ["batch", str(tmp_path)])
     assert result.exit_code == 0
     assert "No audio files" in result.output
@@ -358,6 +370,9 @@ def test_summarize_format_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     transcript.write_text("[00:00] hello world\n", encoding="utf-8")
     out = tmp_path / "out.txt"
 
+    # Repo config.yaml uses the external openai provider; supply a dummy key.
+    monkeypatch.setenv("RECAP_SUMMARIZATION_MODEL_API_KEY", "test-key")
+
     import providers.llm as llm_mod
 
     monkeypatch.setattr(llm_mod.LLMSummarizer, "summarize", lambda self, text: "summary text")
@@ -376,6 +391,9 @@ def test_summarize_format_json_stdout_is_pure_json(tmp_path: Path, monkeypatch: 
 
     transcript = tmp_path / "t.txt"
     transcript.write_text("[00:00] hello world\n", encoding="utf-8")
+
+    # Repo config.yaml uses the external openai provider; supply a dummy key.
+    monkeypatch.setenv("RECAP_SUMMARIZATION_MODEL_API_KEY", "test-key")
 
     import providers.llm as llm_mod
 
@@ -399,6 +417,9 @@ def test_summarize_unknown_format(tmp_path: Path) -> None:
 def test_summarize_llm_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     transcript = tmp_path / "t.txt"
     transcript.write_text("[00:00] hello world\n", encoding="utf-8")
+
+    # Repo config.yaml uses the external openai provider; supply a dummy key.
+    monkeypatch.setenv("RECAP_SUMMARIZATION_MODEL_API_KEY", "test-key")
 
     import providers.llm as llm_mod
 

@@ -40,12 +40,25 @@ def make_summarizer(
 
     chunk_prompt = CHUNK_PROMPTS.get(effective_lang, CHUNK_PROMPTS["ru"])
 
+    # An external (non-local) endpoint must have an explicit key. Without one the
+    # OpenAI SDK would silently read OPENAI_API_KEY from the environment — the exact
+    # fallback the project documents as absent — so fail loudly instead.
+    from workflows import is_external_provider  # noqa: PLC0415
+
+    resolved_base_url = model.base_url or PROVIDER_PRESETS[provider_name]
+    if is_external_provider(resolved_base_url, provider_name) and not model.api_key:
+        raise ValueError(
+            "No API key configured for external provider "
+            f"{provider_name!r}. Set summarization.model.api_key or the "
+            "RECAP_SUMMARIZATION_MODEL_API_KEY environment variable."
+        )
+
     from providers.llm import LLMSummarizer  # noqa: PLC0415
 
     return LLMSummarizer(
         model=model_override or model.name,
         api_key=model.api_key,
-        base_url=model.base_url or PROVIDER_PRESETS[provider_name],
+        base_url=resolved_base_url,
         max_chars=summarization.max_transcript_chars,
         prompt_template=prompt_template,
         chunk_prompt=chunk_prompt,
