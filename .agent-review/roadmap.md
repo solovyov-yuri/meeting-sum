@@ -12,9 +12,9 @@
 
 | ID | Название | Severity | Effort | Статус | Отметки |
 |----|----------|----------|--------|--------|---------|
-| [SEC-001](issues/SEC-001.md) | Живой API-ключ в открытом виде в config.yaml | high | quick-win | proposed | ключ читали ревью-агенты — ротировать |
-| [REL-001](issues/REL-001.md) | UnicodeDecodeError не перехватывается при чтении транскрипта | high | quick-win | proposed | |
-| [REL-004](issues/REL-004.md) | Десктоп отклоняет .mp4 — реальный формат пользователя | high | quick-win | proposed | |
+| [SEC-001](issues/SEC-001.md) | Живой API-ключ в открытом виде в config.yaml | high | quick-win | done | 2026-07-02: ключ убран из config.yaml, старый ротирован, ключ через env |
+| [REL-001](issues/REL-001.md) | UnicodeDecodeError не перехватывается при чтении транскрипта | high | quick-win | done | 2026-07-02: ловим (OSError, UnicodeDecodeError) в cli.py+workflows.py; тесты на оба пути |
+| [REL-004](issues/REL-004.md) | Десктоп отклоняет .mp4 — реальный формат пользователя | high | quick-win | done | 2026-07-02: общая AUDIO_EXTENSIONS (+mp4/mkv/webm/flac), синк bridge.ts; drag-in-app вручную не проверял |
 | [ARCH-002](issues/ARCH-002.md) | Отмена: kill вместо кооперативной; потеря истории/транскрипта | high | small | proposed | |
 | [AGENT-001](issues/AGENT-001.md) | Скилл project-review: нет references/assets; 3 копии | high | small | done | 2026-07-02: скилл сделан глобальным (Windows-home канонический + symlink в WSL-home), 5 файлов references/assets созданы, проектная копия удалена |
 | [AGENT-002](issues/AGENT-002.md) | CLAUDE.md/AGENTS.md: desktop-слой невидим, ложное правило boundary | high | small | proposed | |
@@ -58,3 +58,20 @@
 <!-- Записи человека. Формат: дата — ID — решение и причина. Ревью-агент сюда только добавляет
 однострочные флаги (например, «not observed in review YYYY-MM-DD — verify if resolved»)
 и никогда не редактирует написанное человеком. -->
+
+2026-07-02 — SEC-001 — in-progress. Принят вариант 1+3: секрет уходит из config.yaml в env-переменную
+`RECAP_SUMMARIZATION_MODEL_API_KEY`. `config.yaml.example` переведён на подсказку про env (перестал
+предлагать класть ключ в файл). Осталось: убрать строку `api_key` из локального `config.yaml` и
+ротировать старый ключ на platform.openai.com. Закрыть в `done` после ротации.
+
+2026-07-02 — SEC-001 — done. Строка `api_key` удалена из локального `config.yaml`, старый ключ
+ротирован на platform.openai.com, новый ключ подаётся через `RECAP_SUMMARIZATION_MODEL_API_KEY`.
+
+2026-07-02 — REL-001 — done. Вариант 1: чтение транскрипта ловит `(OSError, UnicodeDecodeError)` в
+`cli.py summarize` и `workflows.resummarize_one`. Регрессионные тесты на cp1251 в test_cli.py и
+test_workflows.py. ruff/mypy/pytest — зелёные (301 passed).
+
+2026-07-02 — REL-004 — done. Вариант 1: единая константа `AUDIO_EXTENSIONS` в `workflows.py`
+(+`.mp4 .mkv .webm .flac`), `cli.py` импортирует её (дубль удалён), фильтр в `bridge.ts`
+синхронизирован. Юнит-тест на приём `.mp4` (run_one_file). Не проверено вручную: реальный
+drag-and-drop `.mp4` в запущенном десктоп-приложении (нет GPU/Tauri-рантайма здесь).
