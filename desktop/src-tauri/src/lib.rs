@@ -16,16 +16,27 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
+
+/// A long-lived `recap-bridge serve` process kept warm across runs so the Whisper model is not
+/// reloaded every run (PERF-001). Only `run_recap` uses it; a broken worker falls back to a fresh
+/// spawn-per-call run, so a worker bug degrades to "slow but correct", never "broken".
+struct Worker {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+}
 
 struct RunState {
     cancel: Arc<AtomicBool>,
+    worker: Arc<Mutex<Option<Worker>>>,
 }
 
 fn bridge_command(app: &AppHandle) -> Result<Command, String> {
@@ -173,9 +184,25 @@ async fn cancel_run(state: State<'_, RunState>) -> Result<(), String> {
 async fn run_recap(app: AppHandle, state: State<'_, RunState>, req: Value) -> Result<Value, String> {
     state.cancel.store(false, Ordering::SeqCst);
     let cancel = state.cancel.clone();
-    tauri::async_runtime::spawn_blocking(move || streaming_blocking(&app, cancel, "run_recap", req))
-        .await
-        .map_err(|e| e.to_string())?
+    let worker = state.worker.clone();
+    tauri::async_runtime::spawn_blocking(move || match run_via_worker(&app, &cancel, &worker, &req) {
+        Ok(v) => Ok(v),
+        // A genuine run error propagates just like the spawn-per-call path.
+        Err(WorkerError::Run(msg)) => Err(msg),
+        // The worker is unusable: drop it (kill any dead child) and fall back to a fresh spawn —
+        // slow (model reloads) but correct. Next run will spawn a fresh worker.
+        Err(WorkerError::Broken(reason)) => {
+            eprintln!("recap: warm-model worker unusable ({reason}); falling back to spawn-per-call");
+            if let Ok(mut guard) = worker.lock() {
+                if let Some(mut w) = guard.take() {
+                    let _ = w.child.kill();
+                }
+            }
+            streaming_blocking(&app, cancel, "run_recap", req)
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -195,6 +222,26 @@ fn cancel_flag_path() -> PathBuf {
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     std::env::temp_dir().join(format!("recap-cancel-{}-{}.flag", std::process::id(), nanos))
+}
+
+/// Watcher thread that writes the cancel flag file the moment the user cancels — needed because
+/// the reader thread blocks on a long silent transcription stage (no progress lines). Returns a
+/// `done` flag to stop it and its join handle.
+fn spawn_flag_watcher(cancel: Arc<AtomicBool>, flag_path: PathBuf) -> (Arc<AtomicBool>, JoinHandle<()>) {
+    let done = Arc::new(AtomicBool::new(false));
+    let handle = {
+        let done = done.clone();
+        std::thread::spawn(move || {
+            while !done.load(Ordering::SeqCst) {
+                if cancel.load(Ordering::SeqCst) {
+                    let _ = std::fs::write(&flag_path, b"1");
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        })
+    };
+    (done, handle)
 }
 
 fn streaming_blocking(app: &AppHandle, cancel: Arc<AtomicBool>, command: &str, req: Value) -> Result<Value, String> {
@@ -224,23 +271,7 @@ fn streaming_blocking(app: &AppHandle, cancel: Arc<AtomicBool>, command: &str, r
             .map_err(|e| e.to_string())?;
     } // close stdin so the bridge starts processing
 
-    // Watcher thread: write the flag file the moment the user cancels, even while the main
-    // thread is blocked reading a long silent transcription stage (no progress lines).
-    let watcher_done = Arc::new(AtomicBool::new(false));
-    let watcher = {
-        let cancel = cancel.clone();
-        let done = watcher_done.clone();
-        let flag_path = flag_path.clone();
-        std::thread::spawn(move || {
-            while !done.load(Ordering::SeqCst) {
-                if cancel.load(Ordering::SeqCst) {
-                    let _ = std::fs::write(&flag_path, b"1");
-                    return;
-                }
-                std::thread::sleep(Duration::from_millis(100));
-            }
-        })
-    };
+    let (watcher_done, watcher) = spawn_flag_watcher(cancel.clone(), flag_path.clone());
 
     let stdout = child.stdout.take().ok_or("Нет stdout у процесса bridge")?;
     let reader = BufReader::new(stdout);
@@ -295,6 +326,131 @@ fn streaming_blocking(app: &AppHandle, cancel: Arc<AtomicBool>, command: &str, r
     final_result.ok_or_else(|| "Не получен результат от bridge".to_string())
 }
 
+/// Failure modes of a worker run. `Run` = the run itself errored (propagate, same as spawn-per-call);
+/// `Broken` = the worker/pipe is unusable (caller drops the worker and falls back to a fresh spawn).
+enum WorkerError {
+    Run(String),
+    Broken(String),
+}
+
+fn spawn_worker(app: &AppHandle) -> Result<Worker, String> {
+    let mut cmd = bridge_command(app)?;
+    cmd.arg("serve")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = cmd.spawn().map_err(|e| format!("Не удалось запустить worker: {e}"))?;
+    let stdin = child.stdin.take().ok_or("Нет stdin у worker")?;
+    let stdout = child.stdout.take().ok_or("Нет stdout у worker")?;
+    Ok(Worker {
+        child,
+        stdin,
+        stdout: BufReader::new(stdout),
+    })
+}
+
+/// Run `run_recap` through the persistent warm-model worker. The `Mutex` guard is held for the
+/// whole run, so runs are serialised here (not assumed from the UI). The worker's stdout never
+/// EOFs between runs, so we read until the terminal `result`/`error` line and leave the pipe open.
+fn run_via_worker(
+    app: &AppHandle,
+    cancel: &Arc<AtomicBool>,
+    worker: &Arc<Mutex<Option<Worker>>>,
+    req: &Value,
+) -> Result<Value, WorkerError> {
+    let flag_path = cancel_flag_path();
+    let _ = std::fs::remove_file(&flag_path);
+    let mut req = req.clone();
+    if let Some(obj) = req.as_object_mut() {
+        obj.insert("cancel_flag".to_string(), json!(flag_path.to_string_lossy()));
+    }
+    let (done, watcher) = spawn_flag_watcher(cancel.clone(), flag_path.clone());
+
+    let finish = |done: &Arc<AtomicBool>, flag: &PathBuf, watcher: JoinHandle<()>| {
+        done.store(true, Ordering::SeqCst);
+        let _ = watcher.join();
+        let _ = std::fs::remove_file(flag);
+    };
+
+    let mut guard = match worker.lock() {
+        Ok(g) => g,
+        Err(_) => {
+            finish(&done, &flag_path, watcher);
+            return Err(WorkerError::Broken("worker mutex poisoned".to_string()));
+        }
+    };
+    if guard.is_none() {
+        match spawn_worker(app) {
+            Ok(w) => *guard = Some(w),
+            Err(e) => {
+                finish(&done, &flag_path, watcher);
+                return Err(WorkerError::Broken(e));
+            }
+        }
+    }
+    let w = guard.as_mut().unwrap();
+
+    let mut req_line = req.to_string();
+    req_line.push('\n');
+    if let Err(e) = w.stdin.write_all(req_line.as_bytes()).and_then(|_| w.stdin.flush()) {
+        finish(&done, &flag_path, watcher);
+        return Err(WorkerError::Broken(e.to_string()));
+    }
+
+    let outcome: Result<Value, WorkerError>;
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match w.stdout.read_line(&mut line) {
+            Ok(0) => {
+                outcome = Err(WorkerError::Broken("worker закрыл stdout".to_string()));
+                break;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                outcome = Err(WorkerError::Broken(e.to_string()));
+                break;
+            }
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let value: Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        match value.get("type").and_then(|v| v.as_str()) {
+            Some("progress") => {
+                if let Some(event) = value.get("event") {
+                    let _ = app.emit("recap-progress", event);
+                }
+            }
+            Some("result") => {
+                outcome = value
+                    .get("result")
+                    .cloned()
+                    .ok_or_else(|| WorkerError::Broken("пустой result от worker".to_string()));
+                break;
+            }
+            Some("error") => {
+                outcome = Err(WorkerError::Run(
+                    value
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Ошибка выполнения")
+                        .to_string(),
+                ));
+                break;
+            }
+            _ => {}
+        }
+    }
+    drop(guard);
+    finish(&done, &flag_path, watcher);
+    outcome
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -302,6 +458,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(RunState {
             cancel: Arc::new(AtomicBool::new(false)),
+            worker: Arc::new(Mutex::new(None)),
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
@@ -317,6 +474,18 @@ pub fn run() {
             resummarize,
             cancel_run,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // Kill the persistent worker on exit — a long-lived process left orphaned holds the GPU.
+            if let RunEvent::Exit = event {
+                if let Some(state) = app_handle.try_state::<RunState>() {
+                    if let Ok(mut guard) = state.worker.lock() {
+                        if let Some(mut w) = guard.take() {
+                            let _ = w.child.kill();
+                        }
+                    }
+                }
+            }
+        });
 }
