@@ -33,9 +33,9 @@
 | [AGENT-005](issues/AGENT-005.md) | Allowlist не соответствует workflow; нет deny для uv | medium | quick-win | proposed | нужно явное согласие (само-модификация прав) — /update-config или /fewer-permission-prompts |
 | [SEC-003](issues/SEC-003.md) | Нескоуплённые read_text/export_summary IPC | medium | small | done | 2026-07-02: read_text скоуплен (history+data dir)+UnicodeDecodeError; export требует существующий каталог; тесты |
 | [CODE-001](issues/CODE-001.md) | Хардкод путей вывода рядом с аудио; перезапись {stem}.txt | medium | small | done | 2026-07-02: run honors configured paths (Пути-экран); tsc/eslint. Остаток: overwrite при пустых путях — follow-up. Не гонял app |
-| [DEP-001](issues/DEP-001.md) | ESLint 8 EOL | medium | small | proposed | нужен npm install eslint@9 + flat-config + прогон lint; слепой бамп сломает repo — за тобой |
+| [DEP-001](issues/DEP-001.md) | ESLint 8 EOL | medium | small | done | 2026-07-02: flat config eslint.config.mjs, eslint^9; lint/build/test зелёные (npm из WSL) |
 | [AGENT-007](issues/AGENT-007.md) | Граница WSL/Windows-проверок не документирована | medium | small | done | 2026-07-02: раздел про WSL vs Windows-проверки в AGENTS.md |
-| [DEP-003](issues/DEP-003.md) | CUDA-wheels безусловные (~2 ГБ; вероятно ломают macOS) | medium | medium | proposed | правка pyproject требует uv lock regen (uv здесь запрещён) + проверка резолва на macOS — за тобой |
+| [DEP-003](issues/DEP-003.md) | CUDA-wheels безусловные (~2 ГБ; вероятно ломают macOS) | medium | medium | in-progress | 2026-07-02: маркеры sys_platform!=darwin в pyproject + README; нужно `uv lock` + проверка резолва на macOS — за тобой |
 | [PERF-001](issues/PERF-001.md) | Whisper-модель перезагружается на каждый десктоп-запуск | medium | large | in-progress | 2026-07-02: persistent worker (serve) + warm-cache + fallback; Python тест (модель 1×), Rust cargo/clippy чисто; тёплое переиспользование на GPU — за тобой |
 | [CODE-002](issues/CODE-002.md) | run_one_file строит summarizer дважды | low | quick-win | done | 2026-07-02: summarizer строится один раз и передаётся в _summarize_and_export |
 | [CODE-003](issues/CODE-003.md) | Мёртвые transcribe_audio/summarize_transcript | low | quick-win | done | 2026-07-02: удалены (без вызовов); спека обновлена |
@@ -51,7 +51,7 @@
 | [CODE-007](issues/CODE-007.md) | Статус ключа только для сохранённого провайдера | low | small | done | 2026-07-02: api_keys_configured{provider:bool} в get_settings; UI по черновому провайдеру; тесты+tsc |
 | [REL-006](issues/REL-006.md) | Гонка read-modify-write в history.json | low | small | done | 2026-07-02: файловый лок (msvcrt/fcntl) вокруг append/delete; тест |
 | [PERF-002](issues/PERF-002.md) | Чанковая суммаризация последовательная | low | medium | proposed | низкий приоритет: ломает стриминг токенов, упрётся в локальный Ollama; опция 2 — принять |
-| [DEP-002](issues/DEP-002.md) | Vite/Vitest/Tailwind/React отстают на мажор(ы) | low | medium | proposed | мажорные апгрейды — нужен npm install + runtime-прогон; слепо рискованно |
+| [DEP-002](issues/DEP-002.md) | Vite/Vitest/Tailwind/React отстают на мажор(ы) | low | medium | in-progress | 2026-07-02: vite^7+vitest^3+plugin-react^5 (build/test зелёные); Tailwind4/React19 — отдельные миграции, не сделаны |
 
 ## Журнал решений
 
@@ -115,3 +115,10 @@ transcription.model, drop старой перед новой). Serial через
 корректно). resummarize не трогали (LLM-only). Проверено здесь: Python 320 тестов (в т.ч.
 make_transcriber 1× на 2 запуска), ruff/mypy, cargo check+clippy чисто. НЕ проверено: реальное
 тёплое переиспользование модели и жизненный цикл воркера в запущенном app на GPU — за пользователем.
+
+2026-07-02 — DEP-001/002/003. Обнаружено: фронт-тулчейн запускается из WSL через Windows-node
+(`/mnt/c/Program Files/nodejs`), так что npm install/lint/build/test здесь ПРОВЕРЯЕМЫ (раньше считал иначе).
+DEP-001 done: миграция на ESLint 9 flat config (eslint.config.mjs), lint 0 ошибок, build+vitest зелёные.
+DEP-002 in-progress: vite^7+vitest^3+plugin-react^5 — build (tsc+vite) и 7 тестов зелёные; Tailwind 4 и
+React 19 сознательно оставлены отдельными миграциями (по рекомендации issue). DEP-003 in-progress:
+env-маркеры на CUDA-wheels — за пользователем `uv lock` (uv из WSL запрещён) и проверка резолва на macOS.
