@@ -12,7 +12,7 @@ from transcript import Segment, Transcript
 
 
 class FakeTranscriber:
-    def transcribe(self, audio: Path, language: str = "ru") -> Transcript:
+    def transcribe(self, audio: Path, language: str = "ru", *, on_progress: object = None) -> Transcript:
         return Transcript(segments=(Segment(0.0, 1.0, "обсудили план"),))
 
 

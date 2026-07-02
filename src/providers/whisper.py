@@ -4,6 +4,7 @@ import ctypes
 import logging
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from transcript import Segment, Transcript
@@ -77,7 +78,9 @@ class WhisperTranscriber:
             self._model = WhisperModel(model_name, device=device, compute_type=compute_type)
         logger.info("Model %s loaded on %s.", model_name, device)
 
-    def transcribe(self, audio: Path, language: str = "ru") -> Transcript:
+    def transcribe(
+        self, audio: Path, language: str = "ru", *, on_progress: Callable[[float], None] | None = None
+    ) -> Transcript:
         from rich.console import Console  # noqa: PLC0415
         from rich.progress import (  # noqa: PLC0415
             BarColumn,
@@ -107,6 +110,8 @@ class WhisperTranscriber:
             for s in segments_iter:
                 segments.append(Segment(start=s.start, end=s.end, text=s.text.strip()))
                 progress.update(task, completed=s.end)
+                if on_progress is not None and info.duration:
+                    on_progress(min(1.0, s.end / info.duration))
 
         logger.info("Got %d segments.", len(segments))
         return Transcript(segments=tuple(segments))

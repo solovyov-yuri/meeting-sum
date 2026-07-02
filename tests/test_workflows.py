@@ -14,7 +14,11 @@ class FakeTranscriber:
     def __init__(self, transcript: Transcript) -> None:
         self._transcript = transcript
 
-    def transcribe(self, audio: Path, language: str = "ru") -> Transcript:
+    def transcribe(
+        self, audio: Path, language: str = "ru", *, on_progress: object = None
+    ) -> Transcript:
+        if callable(on_progress):
+            on_progress(0.5)  # emit one progress tick so the wiring is exercised
         return self._transcript
 
 
@@ -98,6 +102,25 @@ def test_run_one_file_success(tmp_path: Path, audio_file: Path, monkeypatch: pyt
     assert ("transcribe", "success") in steps_done
     assert ("summarize", "success") in steps_done
     assert ("export", "success") in steps_done
+
+
+def test_run_one_file_emits_transcribe_percent(
+    tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # CODE-006: the transcriber's per-segment callback surfaces as a transcribe progress event
+    # carrying a real percent (the browser mock already showed a moving bar; now the real path does).
+    tr = Transcript(segments=(Segment(0.0, 1.0, "x"),))
+    _patch_providers(monkeypatch, tr, FakeSummarizer())
+    events: list[ProgressEvent] = []
+    options = RunOptions(
+        audio_path=audio_file,
+        transcript_path=tmp_path / "tr.txt",
+        summary_path=tmp_path / "sum.txt",
+        provider="ollama",
+    )
+    run_one_file(options, settings=Settings(), progress=events.append)
+    pcts = [e.percent for e in events if e.step == "transcribe" and e.percent is not None]
+    assert 0.5 in pcts  # FakeTranscriber emits on_progress(0.5)
 
 
 def test_run_one_file_partial_success_on_llm_failure(

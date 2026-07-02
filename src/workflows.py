@@ -207,8 +207,12 @@ def run_one_file(
         with prepared_audio(audio_path, settings.preprocessing) as prepared:
             if settings.preprocessing.enabled:
                 emit(ProgressEvent(STEP_PREPROCESS, "success", "Аудио подготовлено."))
-            emit(ProgressEvent(STEP_TRANSCRIBE, "running", "Транскрибация началась."))
-            transcript = transcriber.transcribe(prepared, lang)
+            emit(ProgressEvent(STEP_TRANSCRIBE, "running", "Транскрибация началась.", percent=0.0))
+
+            def on_segment(pct: float) -> None:  # CODE-006: real per-segment progress
+                emit(ProgressEvent(STEP_TRANSCRIBE, "running", f"Транскрибация… {int(pct * 100)}%", percent=pct))
+
+            transcript = transcriber.transcribe(prepared, lang, on_progress=on_segment)
     except PreprocessingError as exc:
         logger.exception("Preprocessing failed")
         return failed(STEP_PREPROCESS, f"Ошибка предобработки аудио: {humanize_error(exc)}")
