@@ -88,7 +88,6 @@ export interface RunRequest {
   audio_path: string;
   transcript_path?: string | null;
   summary_path?: string | null;
-  output_formats?: ExportFormat[];
   overrides?: {
     transcription_language?: string | null;
     summary_language?: string | null;

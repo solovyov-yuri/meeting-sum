@@ -58,7 +58,6 @@ class RunOptions:
     audio_path: Path | None = None
     transcript_path: Path | None = None
     summary_path: Path | None = None
-    output_format: str = "telegram"
     transcription_language: str | None = None
     summary_language: str | None = None
     provider: str | None = None

@@ -431,14 +431,12 @@ def export_summary(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _build_run_options(payload: dict[str, Any]) -> RunOptions:
     overrides = payload.get("overrides") or {}
-    formats = payload.get("output_formats") or ["telegram"]
     transcript_path = payload.get("transcript_path")
     summary_path = payload.get("summary_path")
     return RunOptions(
         audio_path=Path(payload["audio_path"]),
         transcript_path=Path(transcript_path) if transcript_path else None,
         summary_path=Path(summary_path) if summary_path else None,
-        output_format=formats[0] if formats else "telegram",
         transcription_language=overrides.get("transcription_language"),
         summary_language=overrides.get("summary_language"),
         provider=overrides.get("provider"),

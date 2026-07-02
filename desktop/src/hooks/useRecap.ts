@@ -169,7 +169,6 @@ export function useRecap() {
           audio_path: audioPath,
           transcript_path: transcriptPath,
           summary_path: summaryPath,
-          output_formats: ["telegram", "json"],
           overrides: {
             provider: overrides.provider,
             model: overrides.model,
@@ -229,7 +228,6 @@ export function useRecap() {
           audio_path: audioPath,
           transcript_path: transcriptPath,
           summary_path: summaryPath,
-          output_formats: ["telegram", "json"],
           overrides: {
             provider: overrides.provider,
             model: overrides.model,

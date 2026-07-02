@@ -11,10 +11,9 @@ Bridge должен быть JSON-friendly и устойчивым к долги
 ```python
 @dataclass(frozen=True)
 class RunOptions:
-    audio_path: Path
+    audio_path: Path | None = None
     transcript_path: Path | None = None
     summary_path: Path | None = None
-    output_format: str = "telegram"
     transcription_language: str | None = None
     summary_language: str | None = None
     provider: str | None = None
@@ -215,7 +214,6 @@ Input:
   "audio_path": "C:/meetings/meeting.mp3",
   "transcript_path": null,
   "summary_path": null,
-  "output_formats": ["telegram", "plain", "json"],
   "overrides": {
     "transcription_language": "ru",
     "summary_language": "ru",
