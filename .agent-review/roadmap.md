@@ -47,11 +47,11 @@
 | [CONV-001](issues/CONV-001.md) | ruff known-first-party: призраки pipeline/protocols | low | quick-win | done | 2026-07-02: убраны pipeline/protocols, добавлен preprocessing |
 | [DOC-002](issues/DOC-002.md) | README не упоминает десктоп-приложение | low | quick-win | done | 2026-07-02: секция «Десктоп-приложение» со ссылками |
 | [AGENT-008](issues/AGENT-008.md) | Весь .claude/ в gitignore | low | quick-win | done | 2026-07-02: ignore сужен до settings.local.json |
-| [CODE-006](issues/CODE-006.md) | Реальный прогресс без percent (в отличие от мока) | low | small | proposed | отложено: меняет сигнатуру Transcriber (~10 фейков), а UX percent не проверить без GPU здесь |
+| [CODE-006](issues/CODE-006.md) | Реальный прогресс без percent (в отличие от мока) | low | small | done | 2026-07-02: on_progress в WhisperTranscriber, run_one_file шлёт percent посегментно; тест. Живой бар видно только на GPU |
 | [CODE-007](issues/CODE-007.md) | Статус ключа только для сохранённого провайдера | low | small | done | 2026-07-02: api_keys_configured{provider:bool} в get_settings; UI по черновому провайдеру; тесты+tsc |
 | [REL-006](issues/REL-006.md) | Гонка read-modify-write в history.json | low | small | done | 2026-07-02: файловый лок (msvcrt/fcntl) вокруг append/delete; тест |
-| [PERF-002](issues/PERF-002.md) | Чанковая суммаризация последовательная | low | medium | proposed | низкий приоритет: ломает стриминг токенов, упрётся в локальный Ollama; опция 2 — принять |
-| [DEP-002](issues/DEP-002.md) | Vite/Vitest/Tailwind/React отстают на мажор(ы) | low | medium | in-progress | 2026-07-02: vite^7+vitest^3+plugin-react^5 (build/test зелёные); Tailwind4/React19 — отдельные миграции, не сделаны |
+| [PERF-002](issues/PERF-002.md) | Чанковая суммаризация последовательная | low | medium | done | 2026-07-02: ThreadPoolExecutor(3) для чанков только на внешних провайдерах (localhost — последовательно), порядок сохранён; тесты |
+| [DEP-002](issues/DEP-002.md) | Vite/Vitest/Tailwind/React отстают на мажор(ы) | low | medium | in-progress | 2026-07-02: vite^7+vitest^3+plugin-react^5+react^19 (build/test зелёные). Tailwind 4 сознательно НЕ делаю вслепую — ломающие визуальные изменения (bare border→currentColor, outline/shadow/ring), а UI отсюда не вижу |
 
 ## Журнал решений
 
@@ -122,3 +122,13 @@ DEP-001 done: миграция на ESLint 9 flat config (eslint.config.mjs), li
 DEP-002 in-progress: vite^7+vitest^3+plugin-react^5 — build (tsc+vite) и 7 тестов зелёные; Tailwind 4 и
 React 19 сознательно оставлены отдельными миграциями (по рекомендации issue). DEP-003 in-progress:
 env-маркеры на CUDA-wheels — за пользователем `uv lock` (uv из WSL запрещён) и проверка резолва на macOS.
+
+2026-07-02 — CODE-006/PERF-002 — done. CODE-006: посегментный percent из WhisperTranscriber через
+run_one_file (CLI-путь не трогали — расхождение ARCH-001). PERF-002: параллельные чанки на внешних
+провайдерах (гейт по localhost), порядок через executor.map, merge последовательный.
+2026-07-02 — DEP-002 — React 19 добавлен (build/test зелёные). Tailwind 4 отложен ОСОЗНАННО: у TW4
+несколько ломающих дефолтов, задевающих этот код (bare `border`, `outline-none`, `shadow`, ring), а
+визуальную корректность отсюда проверить нельзя. TW3 поддерживается, issue = low. Делать только с твоим
+визуальным ревью запущенного app.
+2026-07-02 — AGENT-005 — заблокировано классификатором (само-модификация прав) даже при явной просьбе
+«доделать всё»: правку allowlist нужно делать вне auto-mode / через /update-config. Готовый JSON выдан.
