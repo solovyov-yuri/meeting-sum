@@ -56,7 +56,7 @@ class SummarizationSettings:
     # Russian summary unless summarization.language is set explicitly.
     language: str | None = None
     mode: str = "medium"
-    max_transcript_chars: int = 60_000
+    max_transcript_chars: int = 42_000
     timeout_seconds: float = 60.0
     retries: int = 2
     chunking_mode: str = "chunk"

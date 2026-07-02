@@ -27,7 +27,7 @@ def test_defaults_produce_nested_settings() -> None:
     assert s.transcription.model.name == "large-v3"
     assert s.summarization.language is None
     assert s.summarization.mode == "medium"
-    assert s.summarization.max_transcript_chars == 60_000
+    assert s.summarization.max_transcript_chars == 42_000
     assert s.summarization.model.provider == "ollama"
     assert s.summarization.model.name == "qwen3.5:latest"
     assert s.summarization.model.api_key is None
