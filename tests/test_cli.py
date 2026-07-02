@@ -448,7 +448,7 @@ def test_summarize_write_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(utils, "write_text_atomic", bad_write)
     result = runner.invoke(app, ["summarize", str(transcript), "-p", "ollama"])
     assert result.exit_code == 1
-    assert "сохранить резюме" in result.output.lower()
+    assert "сохранить саммари" in result.output.lower()
 
 
 def test_transcribe_write_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

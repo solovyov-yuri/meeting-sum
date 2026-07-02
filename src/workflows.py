@@ -232,7 +232,7 @@ def run_one_file(
     emit(ProgressEvent(STEP_TRANSCRIBE, "success", f"Транскрипт сохранён: {transcript_path}", path=transcript_path))
 
     if transcript.is_empty:
-        msg = "Речь не распознана — резюме не создано."
+        msg = "Речь не распознана — саммари не создано."
         emit(ProgressEvent(STEP_TRANSCRIBE, "warning", msg))
         return RunResult("failed", transcript_path, None, None, transcript_text, None, msg)
 
@@ -291,7 +291,7 @@ def _summarize_and_export(
         emit(ProgressEvent(STEP_SUMMARIZE, "error", msg))
         # partial_success: transcript is on disk, only summarization failed.
         return RunResult("partial_success", transcript_path, None, None, transcript_text, None, msg)
-    emit(ProgressEvent(STEP_SUMMARIZE, "success", "Резюме готово."))
+    emit(ProgressEvent(STEP_SUMMARIZE, "success", "Саммари готово."))
 
     emit(ProgressEvent(STEP_EXPORT, "running", "Сохранение результатов…"))
     telegram_text = to_telegram(raw)
@@ -299,7 +299,7 @@ def _summarize_and_export(
         write_text_atomic(summary_path, telegram_text)
         write_text_atomic(summary_json_path, to_json(MeetingSummary(raw=raw, mode=mode_name)))
     except OSError as exc:
-        msg = f"Не удалось сохранить резюме: {exc}"
+        msg = f"Не удалось сохранить саммари: {exc}"
         emit(ProgressEvent(STEP_EXPORT, "error", msg))
         return RunResult("partial_success", transcript_path, None, None, transcript_text, telegram_text, msg)
     emit(ProgressEvent(STEP_EXPORT, "success", f"Готово: {summary_path}", path=summary_path))
@@ -361,7 +361,7 @@ def resummarize_one(
 
     transcript_text = transcript.to_file_format()
     if transcript.is_empty:
-        msg = "Транскрипт пуст — резюме не создано."
+        msg = "Транскрипт пуст — саммари не создано."
         emit(ProgressEvent(STEP_SUMMARIZE, "warning", msg))
         return RunResult("failed", transcript_path, None, None, transcript_text, None, msg)
 
