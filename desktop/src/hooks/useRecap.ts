@@ -5,6 +5,8 @@ import type {
   ExportFormat,
   HistoryItem,
   ProgressEvent,
+  RunMode,
+  RunRequest,
   RunResult,
   RunStatus,
   StepName,
@@ -13,6 +15,14 @@ import type {
 import { dirName, fileName, stem } from "@/lib/utils";
 
 export const STEP_ORDER: StepName[] = ["preprocess", "transcribe", "summarize", "export"];
+
+// Which steps each run mode actually executes — drives the progress display (#10).
+export const MODE_STEPS: Record<RunMode, StepName[]> = {
+  full: ["preprocess", "transcribe", "summarize", "export"],
+  preprocess: ["preprocess"],
+  transcribe: ["preprocess", "transcribe"],
+  summarize: ["summarize", "export"],
+};
 
 export interface StepState {
   status: StepStatus;
@@ -72,6 +82,7 @@ export function useRecap() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [audioPath, setAudioPath] = useState<string | null>(null);
+  const [runMode, setRunMode] = useState<RunMode>("full");
   const [runConfig, setRunConfig] = useState<RunConfig | null>(null);
 
   const [phase, setPhase] = useState<Phase>("idle");
@@ -130,9 +141,10 @@ export function useRecap() {
 
   const pickFile = useCallback(async () => {
     const bridge = await getBridge();
-    const path = await bridge.pickAudioFile();
+    // Summarize takes a transcript (.txt); the other modes take audio/video.
+    const path = runMode === "summarize" ? await bridge.pickTranscriptFile() : await bridge.pickAudioFile();
     if (path) selectFile(path);
-  }, [selectFile]);
+  }, [runMode, selectFile]);
 
   const applyEvent = useCallback(
     (event: ProgressEvent) => {
@@ -157,30 +169,32 @@ export function useRecap() {
 
     const base = stem(audioPath);
     // Outputs go into the single configured "Папка для результатов" (output_dir), named by the
-    // audio stem — so distinct meetings don't overwrite each other. null → next to the audio file.
+    // input stem — so distinct meetings don't overwrite each other. null → next to the input file.
     const outDir = settings.output_dir?.trim() || dirName(audioPath);
-    const transcriptPath = `${outDir}/${base}.txt`;
-    const summaryPath = `${outDir}/${base}_summary.txt`;
     const bridge = await getBridge();
+    // No per-run overrides: the bridge uses the saved settings authoritatively (fixes the stale-model bug).
     try {
-      // No per-run overrides: the bridge uses the saved settings authoritatively, so
-      // provider/model/mode always reflect what's in Settings (fixes the stale-model bug).
-      const res = await bridge.runRecap(
-        {
-          audio_path: audioPath,
-          transcript_path: transcriptPath,
-          summary_path: summaryPath,
-        },
-        applyEvent,
-      );
+      let res: RunResult;
+      if (runMode === "summarize") {
+        // Input is a transcript (.txt); summarize only — no audio.
+        res = await bridge.resummarize(
+          { transcript_path: audioPath, summary_path: `${outDir}/${base}_summary.txt` },
+          applyEvent,
+        );
+      } else {
+        const req: RunRequest = { run_mode: runMode, audio_path: audioPath };
+        if (runMode === "full" || runMode === "transcribe") req.transcript_path = `${outDir}/${base}.txt`;
+        if (runMode === "full") req.summary_path = `${outDir}/${base}_summary.txt`;
+        res = await bridge.runRecap(req, applyEvent);
+      }
       setResult(res);
       setEditedSummary(res.summary_text ?? "");
       setPhase("done");
-      // Reflect terminal step states for any step left pending.
+      // Reflect terminal step states for any of this mode's steps left pending.
       setSteps((prev) => {
         const next = { ...prev };
         if (res.status === "success") {
-          for (const step of STEP_ORDER) {
+          for (const step of MODE_STEPS[runMode]) {
             if (next[step].status === "pending") next[step] = { status: "success", percent: null };
           }
         }
@@ -201,7 +215,7 @@ export function useRecap() {
       setPhase("done");
     }
     await refreshHistory();
-  }, [audioPath, settings, applyEvent, pushLog, refreshHistory]);
+  }, [audioPath, settings, runMode, applyEvent, pushLog, refreshHistory]);
 
   const retrySummarization = useCallback(async () => {
     // Re-run summarization ONLY, reusing the transcript already on disk. Never
@@ -248,6 +262,25 @@ export function useRecap() {
     setEditedSummary("");
   }, []);
 
+  const changeRunMode = useCallback(
+    (next: RunMode) => {
+      setRunMode(next);
+      // Switching between an audio mode and summarize (transcript input) changes the accepted file
+      // type — clear the current selection so the user re-picks with the right filter.
+      if ((runMode === "summarize") !== (next === "summarize")) {
+        setActiveHistoryId(null);
+        setAudioPath(null);
+        setRunConfig(null);
+        setResult(null);
+        setPhase("idle");
+        setSteps(initialSteps());
+        setLogs([]);
+        setEditedSummary("");
+      }
+    },
+    [runMode],
+  );
+
   const cancel = useCallback(async () => {
     const bridge = await getBridge();
     await bridge.cancelRun();
@@ -262,6 +295,7 @@ export function useRecap() {
     ]);
     setActiveHistoryId(item.id);
     setAudioPath(item.audio_path);
+    setRunMode(item.run_mode ?? "full");
     setRunConfig({ provider: item.provider, model: item.model, mode: item.mode });
     setSteps(stepsForStatus(item.status));
     setLogs([
@@ -302,6 +336,8 @@ export function useRecap() {
     history,
     loadError,
     audioPath,
+    runMode,
+    setRunMode: changeRunMode,
     runConfig,
     phase,
     steps,

@@ -33,6 +33,7 @@ export interface Bridge {
   resummarize(req: RunRequest, onProgress: ProgressHandler): Promise<RunResult>;
   cancelRun(): Promise<void>;
   pickAudioFile(): Promise<string | null>;
+  pickTranscriptFile(): Promise<string | null>;
   revealPath(path: string): Promise<void>;
 }
 
@@ -78,6 +79,14 @@ async function tauriBridge(): Promise<Bridge> {
         directory: false,
         // Kept in sync with AUDIO_EXTENSIONS in src/workflows.py
         filters: [{ name: "Аудио/видео", extensions: ["wav", "mp3", "m4a", "ogg", "mp4", "mkv", "webm", "flac"] }],
+      });
+      return typeof selected === "string" ? selected : null;
+    },
+    async pickTranscriptFile() {
+      const selected = await dialog.open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "Транскрипт", extensions: ["txt"] }],
       });
       return typeof selected === "string" ? selected : null;
     },
@@ -171,7 +180,7 @@ function browserBridge(): Bridge {
       {
         id: crypto.randomUUID(),
         created_at: new Date().toISOString(),
-        audio_path: req.audio_path,
+        audio_path: req.audio_path ?? req.transcript_path ?? "",
         audio_name: name,
         status: result.status,
         transcript_path: result.transcript_path,
@@ -245,7 +254,8 @@ function browserBridge(): Bridge {
     async runRecap(req, onProgress) {
       cancelled = false;
       const provider = req.overrides?.provider ?? settings.summarization.model.provider;
-      const name = req.audio_path.split(/[\\/]/).pop() ?? req.audio_path;
+      const src = req.audio_path ?? "input";
+      const name = src.split(/[\\/]/).pop() ?? src;
       const emit = (e: ProgressEvent) => onProgress(e);
 
       if (settings.preprocessing.enabled) {
@@ -319,7 +329,8 @@ function browserBridge(): Bridge {
     },
     async resummarize(req, onProgress) {
       const provider = req.overrides?.provider ?? settings.summarization.model.provider;
-      const name = req.audio_path.split(/[\\/]/).pop() ?? req.audio_path;
+      const src = req.audio_path ?? req.transcript_path ?? "summary";
+      const name = src.split(/[\\/]/).pop() ?? src;
       const transcriptPath = req.transcript_path ?? "C:/recap/transcript.txt";
       const summaryPath = req.summary_path ?? "C:/recap/summary.txt";
       const transcriptText = files[transcriptPath] ?? MOCK_TRANSCRIPT;
@@ -370,6 +381,9 @@ function browserBridge(): Bridge {
     },
     async pickAudioFile() {
       return "C:/meetings/meeting_2026_06_19.mp3";
+    },
+    async pickTranscriptFile() {
+      return "C:/meetings/meeting_2026_06_19.txt";
     },
     async revealPath() {
       /* no-op in browser */

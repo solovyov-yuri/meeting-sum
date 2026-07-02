@@ -70,11 +70,24 @@ function StepCircle({ status, percent }: { status: StepStatus; percent: number |
   );
 }
 
-export function ProgressSteps({ steps }: { steps: Record<StepName, StepState> }) {
+export function ProgressSteps({
+  steps,
+  order = STEP_ORDER,
+}: {
+  steps: Record<StepName, StepState>;
+  order?: StepName[];
+}) {
+  // Circles are centered in equal columns; the connector runs from the first to the last center.
+  const edge = `${50 / order.length}%`;
   return (
-    <section className="relative grid min-h-[166px] grid-cols-4 items-start rounded-card border border-border bg-panel px-11 pb-6 pt-[30px]">
-      <div className="absolute left-28 right-28 top-[70px] h-0.5 bg-border-strong" />
-      {STEP_ORDER.map((step) => {
+    <section
+      className="relative grid min-h-[166px] items-start rounded-card border border-border bg-panel px-11 pb-6 pt-[30px]"
+      style={{ gridTemplateColumns: `repeat(${order.length}, minmax(0, 1fr))` }}
+    >
+      {order.length > 1 && (
+        <div className="absolute top-[70px] h-0.5 bg-border-strong" style={{ left: edge, right: edge }} />
+      )}
+      {order.map((step) => {
         const state = steps[step];
         return (
           <div key={step} className="relative z-[1] flex flex-col items-center gap-[7px] text-center">

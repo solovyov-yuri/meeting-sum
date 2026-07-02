@@ -1,6 +1,8 @@
 // Types mirroring docs/desktop-bridge-contract.md. Kept in sync with src/desktop_bridge.py.
 
 export type SummaryMode = "brief" | "medium" | "detailed";
+/** Which slice of the pipeline a run executes (distinct from SummaryMode). */
+export type RunMode = "full" | "preprocess" | "transcribe" | "summarize";
 export type ChunkingMode = "chunk" | "truncate";
 export type SummaryProvider = "openai" | "xai" | "ollama" | "lm-studio" | "vllm";
 export type WhisperDevice = "cuda" | "cpu" | "auto";
@@ -85,10 +87,14 @@ export interface RunResult {
   transcript_text: string | null;
   summary_text: string | null;
   error_message: string | null;
+  /** preprocess-only: the produced *.preprocessed.wav (else null/absent). */
+  output_path?: string | null;
 }
 
 export interface RunRequest {
-  audio_path: string;
+  run_mode?: RunMode;
+  /** Audio input for full/preprocess/transcribe; omitted for standalone summarize. */
+  audio_path?: string | null;
   transcript_path?: string | null;
   summary_path?: string | null;
   overrides?: {
@@ -103,9 +109,11 @@ export interface RunRequest {
 export interface HistoryItem {
   id: string;
   created_at: string;
+  run_mode?: RunMode;
   audio_path: string;
   audio_name: string;
   status: RunStatus;
+  output_path?: string | null;
   transcript_path: string | null;
   summary_path: string | null;
   summary_json_path: string | null;

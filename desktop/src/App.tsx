@@ -98,6 +98,8 @@ function Shell() {
           <Workspace
             phase={recap.phase}
             audioPath={recap.audioPath}
+            runMode={recap.runMode}
+            setRunMode={recap.setRunMode}
             steps={recap.steps}
             logs={recap.logs}
             result={recap.result}
@@ -114,6 +116,7 @@ function Shell() {
             phase={recap.phase}
             result={recap.result}
             settings={recap.settings}
+            runMode={recap.runMode}
             runConfig={recap.runConfig}
             audioPath={recap.audioPath}
             editedSummary={recap.editedSummary}

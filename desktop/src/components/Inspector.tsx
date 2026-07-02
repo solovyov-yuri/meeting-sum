@@ -3,12 +3,18 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { getBridge } from "@/lib/bridge";
-import type { AppSettings, ExportFormat, RunResult, SummaryMode } from "@/lib/types";
-import { dirName, stem } from "@/lib/utils";
+import type { AppSettings, ExportFormat, RunMode, RunResult, SummaryMode } from "@/lib/types";
+import { dirName, fileName, stem } from "@/lib/utils";
 import type { Phase, RunConfig } from "@/hooks/useRecap";
 
 const LANG_LABELS: Record<string, string> = { ru: "Русский", en: "English", auto: "Авто" };
 const MODE_LABELS: Record<SummaryMode, string> = { brief: "краткий", medium: "средний", detailed: "подробный" };
+const RUN_MODE_LABELS: Record<RunMode, string> = {
+  full: "Полный",
+  preprocess: "Подготовка",
+  transcribe: "Транскрибация",
+  summarize: "Саммари",
+};
 
 const EXPORT_LABELS: Record<ExportFormat, string> = {
   telegram: "Telegram (.txt)",
@@ -20,6 +26,7 @@ interface InspectorProps {
   phase: Phase;
   result: RunResult | null;
   settings: AppSettings;
+  runMode: RunMode;
   runConfig: RunConfig | null;
   audioPath: string | null;
   editedSummary: string;
@@ -48,22 +55,26 @@ function InfoBox({ rows }: { rows: [string, React.ReactNode][] }) {
   );
 }
 
-function RunInspector({ settings }: InspectorProps) {
+function RunInspector({ settings, runMode }: InspectorProps) {
   // Read-only: runs always use the saved Settings (single source of truth). No per-run editing.
   const s = settings.summarization;
+  const usesTranscribe = runMode === "full" || runMode === "transcribe";
+  const usesSummarize = runMode === "full" || runMode === "summarize";
+  const usesPreprocess = runMode === "full" || runMode === "preprocess" || runMode === "transcribe";
+
+  const rows: [string, React.ReactNode][] = [["Режим", RUN_MODE_LABELS[runMode]]];
+  if (usesTranscribe)
+    rows.push(["Язык распознавания", LANG_LABELS[settings.transcription.language] ?? settings.transcription.language]);
+  if (usesSummarize) {
+    rows.push(["Провайдер", s.model.provider], ["Модель", s.model.name], ["Режим саммари", MODE_LABELS[s.mode]]);
+  }
+  if (usesPreprocess)
+    rows.push(["Предобработка", runMode === "full" ? "вкл (обязательно)" : settings.preprocessing.enabled ? "вкл" : "выкл"]);
+
   return (
     <>
       <h2 className="text-[15px] font-semibold text-ink">Параметры запуска</h2>
-      <InfoBox
-        rows={[
-          ["Провайдер", s.model.provider],
-          ["Модель", s.model.name],
-          ["Режим саммари", MODE_LABELS[s.mode]],
-          ["Язык распознавания", LANG_LABELS[settings.transcription.language] ?? settings.transcription.language],
-          ["Предобработка", settings.preprocessing.enabled ? "вкл" : "выкл"],
-          ["Chunking", s.chunking_mode],
-        ]}
-      />
+      <InfoBox rows={rows} />
       <div className="rounded-card border border-border bg-panel-soft p-3 text-base text-ink-muted">
         Параметры берутся из раздела «Настройки». Чтобы изменить провайдера, модель или режим —
         откройте «Настройки» и запустите разбор заново.
@@ -72,11 +83,39 @@ function RunInspector({ settings }: InspectorProps) {
   );
 }
 
-function ResultInspector({ result, settings, audioPath, editedSummary, runConfig, onRetry }: InspectorProps) {
+function ResultInspector({ result, settings, runMode, audioPath, editedSummary, runConfig, onRetry }: InspectorProps) {
   const { toast } = useToast();
   const [formats, setFormats] = useState<ExportFormat[]>(["telegram", "plain", "json"]);
   const [busy, setBusy] = useState(false);
   if (!result) return null;
+
+  // Preprocess/transcribe produce a file but no summary — a simpler result with a reveal button.
+  if (runMode === "preprocess" || runMode === "transcribe") {
+    const outFile = runMode === "preprocess" ? result.output_path : result.transcript_path;
+    const revealOut = async () => {
+      if (!outFile) return;
+      const bridge = await getBridge();
+      await bridge.revealPath(outFile);
+    };
+    return (
+      <>
+        <h2 className="text-[15px] font-semibold text-ink">Результат</h2>
+        <InfoBox
+          rows={[
+            ["Режим", RUN_MODE_LABELS[runMode]],
+            [
+              runMode === "preprocess" ? "Аудио" : "Транскрипт",
+              <span key="f" className="text-ok">{outFile ? "готово" : "—"}</span>,
+            ],
+            ["Файл", outFile ? fileName(outFile) : "—"],
+          ]}
+        />
+        <Button variant="secondary" size="lg" className="w-full" onClick={revealOut} disabled={!outFile}>
+          <FolderOpen className="h-4 w-4" /> Открыть папку
+        </Button>
+      </>
+    );
+  }
 
   const partial = result.status === "partial_success";
   const mode = runConfig?.mode ?? settings.summarization.mode;

@@ -1,10 +1,17 @@
 import { AlertTriangle, FileAudio, Play, Square, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/controls";
+import { Segmented, Textarea, type SegmentedOption } from "@/components/ui/controls";
 import { cn, fileName } from "@/lib/utils";
-import type { LogEntry, Phase, StepState } from "@/hooks/useRecap";
-import type { RunResult, StepName } from "@/lib/types";
+import { MODE_STEPS, type LogEntry, type Phase, type StepState } from "@/hooks/useRecap";
+import type { RunMode, RunResult, StepName } from "@/lib/types";
+
+const MODE_OPTIONS: SegmentedOption<RunMode>[] = [
+  { value: "full", label: "Полный" },
+  { value: "preprocess", label: "Подготовка" },
+  { value: "transcribe", label: "Транскрибация" },
+  { value: "summarize", label: "Саммари" },
+];
 import { DropZone } from "./DropZone";
 import { LogView } from "./LogView";
 import { ProgressSteps } from "./ProgressSteps";
@@ -16,6 +23,8 @@ type Tab = "transcript" | "summary" | "log";
 interface WorkspaceProps {
   phase: Phase;
   audioPath: string | null;
+  runMode: RunMode;
+  setRunMode: (m: RunMode) => void;
   steps: Record<StepName, StepState>;
   logs: LogEntry[];
   result: RunResult | null;
@@ -35,15 +44,22 @@ export function Workspace(props: WorkspaceProps) {
 
   useEffect(() => {
     if (phase === "running") setTab("log");
-    else if (phase === "done" && result) setTab(result.status === "success" ? "summary" : "transcript");
-  }, [phase, result]);
+    else if (phase === "done" && result) {
+      if (props.runMode === "preprocess") setTab("log");
+      else if (props.runMode === "transcribe") setTab("transcript");
+      else setTab(result.status === "success" ? "summary" : "transcript");
+    }
+  }, [phase, result, props.runMode]);
 
   if (!audioPath) {
     return (
       <main className="flex flex-1 flex-col gap-3 overflow-y-auto p-4 scrollbar-thin">
+        <ModeBar runMode={props.runMode} setRunMode={props.setRunMode} disabled={false} />
         <DropZone onPick={props.onPick} onBrowserDrop={props.onBrowserDrop} dragActive={props.dragActive} />
         <p className="px-1 text-sm text-ink-muted">
-          После выбора файла настройте параметры запуска справа и нажмите «Запустить».
+          {props.runMode === "summarize"
+            ? "Выберите файл транскрипта (.txt) и нажмите «Запустить»."
+            : "Выберите аудиофайл, при необходимости смените режим и нажмите «Запустить»."}
         </p>
       </main>
     );
@@ -53,8 +69,9 @@ export function Workspace(props: WorkspaceProps) {
 
   return (
     <main className="flex flex-1 flex-col gap-3 overflow-hidden p-4">
+      <ModeBar runMode={props.runMode} setRunMode={props.setRunMode} disabled={phase === "running"} />
       <FileHeader {...props} />
-      {showSteps && <ProgressSteps steps={steps} />}
+      {showSteps && <ProgressSteps steps={steps} order={MODE_STEPS[props.runMode]} />}
       {phase === "done" && result && <ResultBanner result={result} onRetry={props.onRetry} onSwitchTranscript={() => setTab("transcript")} />}
 
       <div className="flex min-h-0 flex-1 flex-col rounded-card border border-border bg-panel">
@@ -72,7 +89,13 @@ export function Workspace(props: WorkspaceProps) {
         <div className="min-h-0 flex-1 overflow-hidden">
           {tab === "transcript" && <TranscriptView text={result?.transcript_text ?? ""} />}
           {tab === "summary" && (
-            <SummaryTab phase={phase} result={result} value={props.editedSummary} onChange={props.setEditedSummary} />
+            <SummaryTab
+              phase={phase}
+              runMode={props.runMode}
+              result={result}
+              value={props.editedSummary}
+              onChange={props.setEditedSummary}
+            />
           )}
           {tab === "log" && <LogView logs={logs} />}
         </div>
@@ -167,17 +190,44 @@ function ResultBanner({
   return null;
 }
 
+function ModeBar({
+  runMode,
+  setRunMode,
+  disabled,
+}: {
+  runMode: RunMode;
+  setRunMode: (m: RunMode) => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-3 rounded-card border border-border bg-panel px-3 py-2">
+      <span className="shrink-0 text-sm font-semibold text-ink-muted">Режим</span>
+      <div className={cn("min-w-0 flex-1", disabled && "pointer-events-none opacity-50")}>
+        <Segmented<RunMode> value={runMode} onChange={setRunMode} options={MODE_OPTIONS} />
+      </div>
+    </div>
+  );
+}
+
 function SummaryTab({
   phase,
+  runMode,
   result,
   value,
   onChange,
 }: {
   phase: Phase;
+  runMode: RunMode;
   result: RunResult | null;
   value: string;
   onChange: (v: string) => void;
 }) {
+  if (runMode === "preprocess") {
+    return <p className="p-3.5 text-base text-ink-muted">В режиме «Подготовка» саммари не создаётся — см. вкладку «Лог».</p>;
+  }
+  if (runMode === "transcribe") {
+    return <p className="p-3.5 text-base text-ink-muted">В режиме «Транскрибация» саммари не создаётся — см. вкладку «Транскрипт».</p>;
+  }
   if (phase !== "done" || !result || result.status === "failed") {
     return <p className="p-3.5 text-base text-ink-muted">Саммари появится после завершения суммаризации.</p>;
   }
