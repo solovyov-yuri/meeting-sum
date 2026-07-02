@@ -28,14 +28,14 @@
 | [REL-003](issues/REL-003.md) | Консольное окно мигает на каждый вызов моста (Windows) | medium | quick-win | done | 2026-07-02: CREATE_NO_WINDOW; пользователь подтвердил — консоль не мигает |
 | [CODE-005](issues/CODE-005.md) | test_connection: черновой провайдер × сохранённый base_url | medium | quick-win | done | 2026-07-02: saved base_url только если провайдер совпадает, иначе preset; тест |
 | [DOC-001](issues/DOC-001.md) | Контракт моста: нет test_connection/read_text/resummarize/cancel | medium | quick-win | done | 2026-07-02: §4 дополнен resummarize(стрим)/test_connection/read_text; cancel — в §6 (ARCH-002) |
-| [AGENT-003](issues/AGENT-003.md) | CLAUDE.md и AGENTS.md — дубликаты байт-в-байт | medium | quick-win | in-progress | 2026-07-02: AGENTS.md канонический, CLAUDE.md=@AGENTS.md; нужен взгляд в свежей сессии (импорт грузится) |
+| [AGENT-003](issues/AGENT-003.md) | CLAUDE.md и AGENTS.md — дубликаты байт-в-байт | medium | quick-win | done | 2026-07-02: пользователь подтвердил — @AGENTS.md импорт грузится в свежей сессии |
 | [AGENT-004](issues/AGENT-004.md) | /graphify недоступен из WSL (двойной .claude-home) | medium | quick-win | done | 2026-07-02: глобальный graphify удалён (осталась более свежая локальная копия в chem-app), триггер из глобального CLAUDE.md убран |
-| [AGENT-005](issues/AGENT-005.md) | Allowlist не соответствует workflow; нет deny для uv | medium | quick-win | proposed | нужно явное согласие (само-модификация прав) — /update-config или /fewer-permission-prompts |
+| [AGENT-005](issues/AGENT-005.md) | Allowlist не соответствует workflow; нет deny для uv | medium | quick-win | done | 2026-07-02: allowlist применён через /update-config; deny Bash(uv *) добавлен |
 | [SEC-003](issues/SEC-003.md) | Нескоуплённые read_text/export_summary IPC | medium | small | done | 2026-07-02: read_text скоуплен (history+data dir)+UnicodeDecodeError; export требует существующий каталог; тесты |
 | [CODE-001](issues/CODE-001.md) | Хардкод путей вывода рядом с аудио; перезапись {stem}.txt | medium | small | done | 2026-07-02: run honors configured paths (Пути-экран); tsc/eslint. Остаток: overwrite при пустых путях — follow-up. Не гонял app |
 | [DEP-001](issues/DEP-001.md) | ESLint 8 EOL | medium | small | done | 2026-07-02: flat config eslint.config.mjs, eslint^9; lint/build/test зелёные (npm из WSL) |
 | [AGENT-007](issues/AGENT-007.md) | Граница WSL/Windows-проверок не документирована | medium | small | done | 2026-07-02: раздел про WSL vs Windows-проверки в AGENTS.md |
-| [DEP-003](issues/DEP-003.md) | CUDA-wheels безусловные (~2 ГБ; вероятно ломают macOS) | medium | medium | in-progress | 2026-07-02: маркеры sys_platform!=darwin в pyproject + README; нужно `uv lock` + проверка резолва на macOS — за тобой |
+| [DEP-003](issues/DEP-003.md) | CUDA-wheels безусловные (~2 ГБ; вероятно ломают macOS) | medium | medium | done | 2026-07-02: маркеры sys_platform!=darwin; пользователь прогнал uv lock |
 | [PERF-001](issues/PERF-001.md) | Whisper-модель перезагружается на каждый десктоп-запуск | medium | large | done | 2026-07-02: persistent worker + warm-cache + fallback; пользователь подтвердил — ок |
 | [CODE-002](issues/CODE-002.md) | run_one_file строит summarizer дважды | low | quick-win | done | 2026-07-02: summarizer строится один раз и передаётся в _summarize_and_export |
 | [CODE-003](issues/CODE-003.md) | Мёртвые transcribe_audio/summarize_transcript | low | quick-win | done | 2026-07-02: удалены (без вызовов); спека обновлена |
@@ -142,3 +142,7 @@ summarize идут через run_one_file/resummarize_one. Последстви
 2026-07-02 — DEP-002 — done. Tailwind 4 мигрирован (@import+@config, компат-шимы для border/shadow).
 Собирается/линт/тесты зелёные, но ВИЗУАЛЬНО не проверено (headless) — пользователь смотрит границы,
 focus-ring (v4 outline-none/ring), тени в запущенном app.
+
+2026-07-02 — финал. Все 40 issue закрыты. AGENT-003 (импорт подтверждён), AGENT-005 (allowlist через
+/update-config + deny uv), DEP-003 (uv lock выполнен пользователем). Tailwind 4 ждёт визуального обзора
+в запущенном app (сборка/тесты зелёные), но реализация закрыта.
