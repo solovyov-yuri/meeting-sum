@@ -124,7 +124,11 @@ Non-obvious semantics:
   would break the bridge's partial-success contract.
 - **CLI owns everything around the providers.** Each command drives transcribe → write transcript → summarize →
   format → write summary, persisting the transcript before the LLM call (surviving an LLM failure),
-  short-circuiting on empty transcription, and branching on output format.
+  short-circuiting on empty transcription, and branching on output format. The CLI does **not** route
+  through `workflows.run_one_file`: it deliberately keeps English messages and single-file-per-`--format`
+  output, whereas the desktop uses Russian `RunResult` messages and always writes `.txt`+`.json`. This
+  divergence is intentional and documented (`docs/desktop-tauri-spec.md` §4 / roadmap ARCH-001) — do not
+  "unify" it without an explicit i18n + output-semantics decision from the owner.
 - **Cooperative cancellation.** The desktop cancel is a flag file (path passed in the bridge payload), polled
   by `run_one_file` between steps; it returns a real `RunResult("cancelled")`. The Rust shell must not kill
   the bridge process (see `docs/desktop-bridge-contract.md` §6).
