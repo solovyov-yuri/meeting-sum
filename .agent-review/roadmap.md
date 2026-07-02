@@ -36,7 +36,7 @@
 | [DEP-001](issues/DEP-001.md) | ESLint 8 EOL | medium | small | proposed | нужен npm install eslint@9 + flat-config + прогон lint; слепой бамп сломает repo — за тобой |
 | [AGENT-007](issues/AGENT-007.md) | Граница WSL/Windows-проверок не документирована | medium | small | done | 2026-07-02: раздел про WSL vs Windows-проверки в AGENTS.md |
 | [DEP-003](issues/DEP-003.md) | CUDA-wheels безусловные (~2 ГБ; вероятно ломают macOS) | medium | medium | proposed | правка pyproject требует uv lock regen (uv здесь запрещён) + проверка резолва на macOS — за тобой |
-| [PERF-001](issues/PERF-001.md) | Whisper-модель перезагружается на каждый десктоп-запуск | medium | large | proposed | large: нужен долгоживущий bridge-демон (опция 1); опция 2 — задокументировать cold-start |
+| [PERF-001](issues/PERF-001.md) | Whisper-модель перезагружается на каждый десктоп-запуск | medium | large | in-progress | 2026-07-02: persistent worker (serve) + warm-cache + fallback; Python тест (модель 1×), Rust cargo/clippy чисто; тёплое переиспользование на GPU — за тобой |
 | [CODE-002](issues/CODE-002.md) | run_one_file строит summarizer дважды | low | quick-win | done | 2026-07-02: summarizer строится один раз и передаётся в _summarize_and_export |
 | [CODE-003](issues/CODE-003.md) | Мёртвые transcribe_audio/summarize_transcript | low | quick-win | done | 2026-07-02: удалены (без вызовов); спека обновлена |
 | [CODE-004](issues/CODE-004.md) | Мелкий копипаст (дубликат в кортеже, no-op re-raise и др.) | low | quick-win | done | 2026-07-02: 4 пункта — tuple, re-raise, privacy-helper, pushHistory |
@@ -106,3 +106,12 @@ i18n сообщений и смены семантики выходных фай
 (`/mnt/c/Users/solov/.cargo/bin/cargo.exe`). `cargo check`+`clippy` на desktop/src-tauri проходят чисто
 (~5с, deps в target/). ARCH-002/REL-003: компиляция Rust ПРОВЕРЕНА здесь; непроверенным остаётся только
 поведение в запущенном app. AGENTS.md (граница проверок) исправлен; 2 пред-существующих clippy-варнинга убраны.
+
+2026-07-02 — PERF-001 — in-progress. Опция 1 (долгоживущий воркер), scoped: только run_recap идёт
+через persistent `recap-bridge serve` (тёплая Whisper-модель, кэш на 1 модель по полям
+transcription.model, drop старой перед новой). Serial через Mutex; чтение до терминальной строки
+(stdout не EOF-ится); watcher/flag отмены переиспользованы из ARCH-002; воркер убивается на Exit.
+ОБЯЗАТЕЛЬНЫЙ fallback: сломанный/незапустившийся воркер → свежий spawn-per-call (медленно, но
+корректно). resummarize не трогали (LLM-only). Проверено здесь: Python 320 тестов (в т.ч.
+make_transcriber 1× на 2 запуска), ruff/mypy, cargo check+clippy чисто. НЕ проверено: реальное
+тёплое переиспользование модели и жизненный цикл воркера в запущенном app на GPU — за пользователем.
