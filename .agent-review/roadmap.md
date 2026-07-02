@@ -15,17 +15,17 @@
 | [SEC-001](issues/SEC-001.md) | Живой API-ключ в открытом виде в config.yaml | high | quick-win | done | 2026-07-02: ключ убран из config.yaml, старый ротирован, ключ через env |
 | [REL-001](issues/REL-001.md) | UnicodeDecodeError не перехватывается при чтении транскрипта | high | quick-win | done | 2026-07-02: ловим (OSError, UnicodeDecodeError) в cli.py+workflows.py; тесты на оба пути |
 | [REL-004](issues/REL-004.md) | Десктоп отклоняет .mp4 — реальный формат пользователя | high | quick-win | done | 2026-07-02: общая AUDIO_EXTENSIONS (+mp4/mkv/webm/flac), синк bridge.ts; drag-in-app вручную не проверял |
-| [ARCH-002](issues/ARCH-002.md) | Отмена: kill вместо кооперативной; потеря истории/транскрипта | high | small | in-progress | Python+тесты; Rust компилируется+clippy чисто (cargo.exe из WSL); остался ручной тест «Остановить» в app |
+| [ARCH-002](issues/ARCH-002.md) | Отмена: kill вместо кооперативной; потеря истории/транскрипта | high | small | done | 2026-07-02: кооперативная отмена; пользователь подтвердил в app (сообщение про границу этапа, cancelled в истории) |
 | [AGENT-001](issues/AGENT-001.md) | Скилл project-review: нет references/assets; 3 копии | high | small | done | 2026-07-02: скилл сделан глобальным (Windows-home канонический + symlink в WSL-home), 5 файлов references/assets созданы, проектная копия удалена |
 | [AGENT-002](issues/AGENT-002.md) | CLAUDE.md/AGENTS.md: desktop-слой невидим, ложное правило boundary | high | small | done | 2026-07-02: карта +workflows/desktop_bridge/secrets_store/desktop; 3 boundary вместо ложного одного |
 | [AGENT-006](issues/AGENT-006.md) | Ложный отчёт о верификации; правила нет в checked-in файлах | high | small | done | 2026-07-02: правило честной верификации добавлено в AGENTS.md |
 | [ARCH-001](issues/ARCH-001.md) | Пайплайн продублирован между cli.py и workflows.py | high | medium | in-progress | 2026-07-02: опции 2+3 — общий хвост вынесен, расхождение задокументировано; полная унификация (опция 1) отложена (нужен i18n) |
 | [ARCH-003](issues/ARCH-003.md) | output_formats — мёртвый вход контракта | medium | quick-win | proposed | |
 | [ARCH-004](issues/ARCH-004.md) | stderr моста в null — логов нет | medium | quick-win | done | 2026-07-02: ротируемый recap-bridge.log в data dir (вариант 1, Python); тест |
-| [SEC-002](issues/SEC-002.md) | CSP отключён в Tauri | medium | quick-win | in-progress | 2026-07-02: строгий CSP задан; не проверен в webview (dev+prod) |
+| [SEC-002](issues/SEC-002.md) | CSP отключён в Tauri | medium | quick-win | done | 2026-07-02: строгий CSP; пользователь подтвердил — работает |
 | [SEC-004](issues/SEC-004.md) | Скрытый fallback на OPENAI_API_KEY через SDK | medium | quick-win | done | 2026-07-02: factory требует ключ для внешних провайдеров; тесты (в т.ч. с OPENAI_API_KEY в env) |
 | [REL-002](issues/REL-002.md) | ffmpeg без -nostdin и timeout | medium | quick-win | done | 2026-07-02: -nostdin+DEVNULL+timeout→PreprocessingError; тесты |
-| [REL-003](issues/REL-003.md) | Консольное окно мигает на каждый вызов моста (Windows) | medium | quick-win | in-progress | 2026-07-02: CREATE_NO_WINDOW; cargo check+clippy чисто; остался ручной тест «нет мигания» в app |
+| [REL-003](issues/REL-003.md) | Консольное окно мигает на каждый вызов моста (Windows) | medium | quick-win | done | 2026-07-02: CREATE_NO_WINDOW; пользователь подтвердил — консоль не мигает |
 | [CODE-005](issues/CODE-005.md) | test_connection: черновой провайдер × сохранённый base_url | medium | quick-win | done | 2026-07-02: saved base_url только если провайдер совпадает, иначе preset; тест |
 | [DOC-001](issues/DOC-001.md) | Контракт моста: нет test_connection/read_text/resummarize/cancel | medium | quick-win | done | 2026-07-02: §4 дополнен resummarize(стрим)/test_connection/read_text; cancel — в §6 (ARCH-002) |
 | [AGENT-003](issues/AGENT-003.md) | CLAUDE.md и AGENTS.md — дубликаты байт-в-байт | medium | quick-win | in-progress | 2026-07-02: AGENTS.md канонический, CLAUDE.md=@AGENTS.md; нужен взгляд в свежей сессии (импорт грузится) |
@@ -36,7 +36,7 @@
 | [DEP-001](issues/DEP-001.md) | ESLint 8 EOL | medium | small | done | 2026-07-02: flat config eslint.config.mjs, eslint^9; lint/build/test зелёные (npm из WSL) |
 | [AGENT-007](issues/AGENT-007.md) | Граница WSL/Windows-проверок не документирована | medium | small | done | 2026-07-02: раздел про WSL vs Windows-проверки в AGENTS.md |
 | [DEP-003](issues/DEP-003.md) | CUDA-wheels безусловные (~2 ГБ; вероятно ломают macOS) | medium | medium | in-progress | 2026-07-02: маркеры sys_platform!=darwin в pyproject + README; нужно `uv lock` + проверка резолва на macOS — за тобой |
-| [PERF-001](issues/PERF-001.md) | Whisper-модель перезагружается на каждый десктоп-запуск | medium | large | in-progress | 2026-07-02: persistent worker (serve) + warm-cache + fallback; Python тест (модель 1×), Rust cargo/clippy чисто; тёплое переиспользование на GPU — за тобой |
+| [PERF-001](issues/PERF-001.md) | Whisper-модель перезагружается на каждый десктоп-запуск | medium | large | done | 2026-07-02: persistent worker + warm-cache + fallback; пользователь подтвердил — ок |
 | [CODE-002](issues/CODE-002.md) | run_one_file строит summarizer дважды | low | quick-win | done | 2026-07-02: summarizer строится один раз и передаётся в _summarize_and_export |
 | [CODE-003](issues/CODE-003.md) | Мёртвые transcribe_audio/summarize_transcript | low | quick-win | done | 2026-07-02: удалены (без вызовов); спека обновлена |
 | [CODE-004](issues/CODE-004.md) | Мелкий копипаст (дубликат в кортеже, no-op re-raise и др.) | low | quick-win | done | 2026-07-02: 4 пункта — tuple, re-raise, privacy-helper, pushHistory |
