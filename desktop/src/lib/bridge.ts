@@ -34,6 +34,7 @@ export interface Bridge {
   cancelRun(): Promise<void>;
   pickAudioFile(): Promise<string | null>;
   pickTranscriptFile(): Promise<string | null>;
+  pickFolder(): Promise<string | null>;
   revealPath(path: string): Promise<void>;
 }
 
@@ -88,6 +89,10 @@ async function tauriBridge(): Promise<Bridge> {
         directory: false,
         filters: [{ name: "Транскрипт", extensions: ["txt"] }],
       });
+      return typeof selected === "string" ? selected : null;
+    },
+    async pickFolder() {
+      const selected = await dialog.open({ multiple: false, directory: true });
       return typeof selected === "string" ? selected : null;
     },
     revealPath: (path) => opener.revealItemInDir(path),
@@ -422,6 +427,9 @@ function browserBridge(): Bridge {
     },
     async pickTranscriptFile() {
       return "C:/meetings/meeting_2026_06_19.txt";
+    },
+    async pickFolder() {
+      return "C:/meetings/recap-output";
     },
     async revealPath() {
       /* no-op in browser */

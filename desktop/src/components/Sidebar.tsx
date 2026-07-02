@@ -1,4 +1,5 @@
-import { FolderOpen, History, Plus, Settings as SettingsIcon, Trash2 } from "lucide-react";
+import { ChevronDown, FolderOpen, History, Plus, Settings as SettingsIcon, Trash2 } from "lucide-react";
+import { useState } from "react";
 import iconUrl from "@/assets/recap-icon.png";
 import { Button } from "@/components/ui/button";
 import type { HistoryItem } from "@/lib/types";
@@ -28,6 +29,7 @@ export function Sidebar({
   onRevealHistory,
   onDeleteHistory,
 }: SidebarProps) {
+  const [recentOpen, setRecentOpen] = useState(true);
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-panel">
       <div className="flex h-14 items-center gap-2.5 px-3.5 text-[15px] font-semibold">
@@ -42,13 +44,28 @@ export function Sidebar({
       </div>
 
       <nav className="flex flex-col gap-0.5 px-2">
-        <NavItem icon={History} label="История" active={view === "run"} onClick={onOpenHistory} />
+        <button
+          onClick={() => {
+            onOpenHistory();
+            setRecentOpen((o) => !o);
+          }}
+          className={cn(
+            "flex h-[34px] items-center gap-2 rounded-md px-2.5 text-base transition-colors",
+            view === "run" ? "bg-accent-soft font-semibold text-accent" : "text-ink hover:bg-app",
+          )}
+        >
+          <History className="h-4 w-4" />
+          <span className="flex-1 text-left">История</span>
+          <ChevronDown className={cn("h-4 w-4 transition-transform", !recentOpen && "-rotate-90")} />
+        </button>
         <NavItem icon={SettingsIcon} label="Настройки" active={view === "settings"} onClick={onOpenSettings} />
       </nav>
 
-      <div className="mt-3 px-3.5 pb-1.5 text-xs font-bold uppercase text-ink-soft">Последние</div>
-      <div className="flex-1 overflow-y-auto px-2 pb-3 scrollbar-thin">
-        {history.length === 0 ? (
+      {recentOpen && (
+        <>
+          <div className="mt-3 px-3.5 pb-1.5 text-xs font-bold uppercase text-ink-soft">Последние</div>
+          <div className="flex-1 overflow-y-auto px-2 pb-3 scrollbar-thin">
+            {history.length === 0 ? (
           <p className="px-2 py-2 text-sm text-ink-muted">Пока нет запусков.</p>
         ) : (
           <ul className="flex flex-col gap-0.5">
@@ -88,8 +105,10 @@ export function Sidebar({
               </li>
             ))}
           </ul>
-        )}
-      </div>
+            )}
+          </div>
+        </>
+      )}
     </aside>
   );
 }

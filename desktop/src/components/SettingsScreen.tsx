@@ -1,4 +1,4 @@
-import { HelpCircle, Loader2, RefreshCw } from "lucide-react";
+import { FolderOpen, HelpCircle, Loader2, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Segmented, Select, Switch } from "@/components/ui/controls";
@@ -18,6 +18,22 @@ const SECTIONS: { id: SectionId; label: string }[] = [
   { id: "summarization", label: "Суммаризация" },
   { id: "general", label: "Общие" },
 ];
+
+const ALL_PROVIDERS: SummaryProvider[] = ["openai", "xai", "ollama", "lm-studio", "vllm"];
+
+// Recommended summarization models per provider — a hint in the dropdown, not enforced (you can
+// still type any model). External model names go stale, so these are only sensible defaults.
+const RECOMMENDED_MODELS: Record<string, string[]> = {
+  openai: ["gpt-4o-mini", "gpt-4o"],
+  xai: ["grok-4", "grok-3-mini"],
+  ollama: ["qwen2.5", "llama3.1"],
+  "lm-studio": [],
+  vllm: [],
+};
+
+// Known faster-whisper model names (offline list — Whisper models aren't served via an API).
+const WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v2", "large-v3", "large-v3-turbo", "distil-large-v3"];
+const RECOMMENDED_WHISPER = "large-v3";
 
 interface SettingsScreenProps {
   settings: AppSettings;
@@ -228,9 +244,10 @@ function ModelField({ draft, update }: { draft: AppSettings; update: UpdateFn })
         </Button>
       </div>
       <datalist id={listId}>
-        {models.map((m) => (
-          <option key={m} value={m} />
-        ))}
+        {Array.from(new Set([...(RECOMMENDED_MODELS[provider] ?? []), ...models])).map((m) => {
+          const rec = (RECOMMENDED_MODELS[provider] ?? []).includes(m);
+          return <option key={m} value={m} label={rec ? `${m} — рекомендуется` : undefined} />;
+        })}
       </datalist>
     </Field>
   );
@@ -256,7 +273,17 @@ function TranscriptionSection({ draft, update }: { draft: AppSettings; update: U
           />
         </Field>
         <Field label="Модель" tooltip="Размер модели Whisper: крупнее — точнее, но медленнее (напр. large-v3).">
-          <Input value={t.model.name} onChange={(e) => update((d) => (d.transcription.model.name = e.target.value))} />
+          <Input
+            list="whisper-model-options"
+            value={t.model.name}
+            placeholder="напр. large-v3"
+            onChange={(e) => update((d) => (d.transcription.model.name = e.target.value))}
+          />
+          <datalist id="whisper-model-options">
+            {WHISPER_MODELS.map((m) => (
+              <option key={m} value={m} label={m === RECOMMENDED_WHISPER ? `${m} — рекомендуется` : undefined} />
+            ))}
+          </datalist>
         </Field>
         <Field label="Устройство" tooltip="Где выполнять распознавание: CUDA — видеокарта (быстро), CPU — процессор (медленно).">
           <Select
@@ -302,8 +329,15 @@ function SummarizationSection({ draft, update }: { draft: AppSettings; update: U
         <Field label="Провайдер" tooltip="Сервис, делающий саммари. openai/xai — облачные; ollama/lm-studio/vllm — локальные.">
           <Select
             value={s.model.provider}
-            options={["openai", "xai", "ollama", "lm-studio", "vllm"].map((v) => ({ value: v, label: v }))}
-            onChange={(e) => update((d) => (d.summarization.model.provider = e.target.value as SummaryProvider))}
+            options={ALL_PROVIDERS.map((v) => ({ value: v, label: v }))}
+            onChange={(e) =>
+              update((d) => {
+                d.summarization.model.provider = e.target.value as SummaryProvider;
+                // Model and base_url belong to a provider — reset so the new provider starts clean.
+                d.summarization.model.name = "";
+                d.summarization.model.base_url = null;
+              })
+            }
           />
         </Field>
         <ModelField draft={draft} update={update} />
@@ -428,11 +462,23 @@ function GeneralSection({
             tooltip="Куда сохранять транскрипт и саммари. Файлы называются по имени аудиофайла, поэтому разные встречи не перезаписывают друг друга."
             hint="Пусто — сохранять рядом с исходным аудиофайлом."
           >
-            <Input
-              value={draft.output_dir ?? ""}
-              placeholder="рядом с аудиофайлом"
-              onChange={(e) => update((d) => (d.output_dir = e.target.value === "" ? null : e.target.value))}
-            />
+            <div className="flex gap-2">
+              <Input
+                value={draft.output_dir ?? ""}
+                placeholder="рядом с аудиофайлом"
+                onChange={(e) => update((d) => (d.output_dir = e.target.value === "" ? null : e.target.value))}
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={async () => {
+                  const picked = await (await getBridge()).pickFolder();
+                  if (picked) update((d) => (d.output_dir = picked));
+                }}
+              >
+                <FolderOpen className="h-4 w-4" /> Обзор
+              </Button>
+            </div>
           </Field>
         </FormGrid>
         <p className="mt-3 text-sm text-ink-muted">История и конфигурация хранятся в каталоге данных приложения.</p>
@@ -456,16 +502,8 @@ function PrivacySection({ draft, update }: { draft: AppSettings; update: UpdateF
         <strong className="text-base font-semibold text-ink">Внешний провайдер может получить текст транскрипта.</strong>
         <span className="text-sm text-warn">
           При использовании внешнего провайдера (например, OpenAI) текст транскрипта отправляется на внешний сервер.
+          Переключатель выше отключает это предупреждение.
         </span>
-        <label className="flex cursor-pointer items-center gap-2 text-base text-ink">
-          <input
-            type="checkbox"
-            className="h-3.5 w-3.5 accent-accent"
-            checked={draft.privacy_ack}
-            onChange={(e) => update((d) => (d.privacy_ack = e.target.checked))}
-          />
-          Я понимаю
-        </label>
       </div>
     </div>
   );
@@ -481,12 +519,13 @@ function KeysSection({
   refresh: () => Promise<AppSettings>;
 }) {
   const { toast } = useToast();
-  const provider = draft.summarization.model.provider;
-  // CODE-007: reflect the key state of the *drafted* provider, not only the saved one.
+  // Keys are managed per provider independently of the summarization provider — start on the
+  // current one but let the user switch to inspect/manage any provider's key.
+  const [provider, setProvider] = useState<SummaryProvider>(draft.summarization.model.provider);
   const configured = settings.api_keys_configured?.[provider] ?? false;
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
-  const external = isExternalProvider(draft.summarization.model.base_url, provider);
+  const external = isExternalProvider(PROVIDER_BASE_URLS[provider] ?? null, provider);
 
   const withBusy = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -509,7 +548,7 @@ function KeysSection({
       await bridge.setApiKey(provider, value.trim());
       setValue("");
       await refresh();
-      toast("Ключ сохранён", "ok");
+      toast(configured ? "Ключ обновлён" : "Ключ сохранён", "ok");
     });
 
   const deleteKey = () =>
@@ -531,8 +570,12 @@ function KeysSection({
     <div>
       <SectionTitle>Ключи API</SectionTitle>
       <FormGrid>
-        <Field label="Провайдер">
-          <Input value={provider} disabled />
+        <Field label="Провайдер" tooltip="Выберите провайдера, чтобы сохранить/проверить его ключ и увидеть статус.">
+          <Select
+            value={provider}
+            options={ALL_PROVIDERS.map((v) => ({ value: v, label: v }))}
+            onChange={(e) => setProvider(e.target.value as SummaryProvider)}
+          />
         </Field>
         <Field label="Новый ключ">
           <Input type="password" value={value} placeholder="вставьте ключ API" onChange={(e) => setValue(e.target.value)} />
@@ -556,7 +599,7 @@ function KeysSection({
         </span>
         <div className="col-span-2 flex flex-wrap gap-2">
           <Button variant="primary" size="sm" onClick={saveKey} disabled={busy}>
-            Сохранить ключ
+            {configured ? "Обновить ключ" : "Сохранить ключ"}
           </Button>
           <Button variant="secondary" size="sm" onClick={test} disabled={busy}>
             Проверить подключение

@@ -63,10 +63,14 @@ function RunInspector({ settings, runMode }: InspectorProps) {
   const usesPreprocess = runMode === "full" || runMode === "preprocess" || runMode === "transcribe";
 
   const rows: [string, React.ReactNode][] = [["Режим", RUN_MODE_LABELS[runMode]]];
-  if (usesTranscribe)
+  if (usesTranscribe) {
+    rows.push(["Модель распознавания", settings.transcription.model.name]);
     rows.push(["Язык распознавания", LANG_LABELS[settings.transcription.language] ?? settings.transcription.language]);
+  }
   if (usesSummarize) {
-    rows.push(["Провайдер", s.model.provider], ["Модель", s.model.name], ["Режим саммари", MODE_LABELS[s.mode]]);
+    rows.push(["Провайдер (саммари)", s.model.provider]);
+    rows.push(["Модель (саммари)", s.model.name]);
+    rows.push(["Режим саммари", MODE_LABELS[s.mode]]);
   }
   if (usesPreprocess)
     rows.push(["Предобработка", runMode === "full" ? "вкл (обязательно)" : settings.preprocessing.enabled ? "вкл" : "выкл"]);
