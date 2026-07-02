@@ -4,9 +4,12 @@ import logging
 import sys
 from io import TextIOWrapper
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
+
+if TYPE_CHECKING:
+    from providers.llm import LLMSummarizer
 
 if isinstance(sys.stdout, TextIOWrapper):
     sys.stdout.reconfigure(write_through=True)
@@ -49,6 +52,26 @@ def _write_atomic(path: Path, text: str, label: str) -> None:
         raise typer.Exit(code=1) from exc
 
 
+def _format_summary(raw: str, output_format: str, mode_name: str) -> str:
+    """Format a raw LLM summary as telegram text or JSON. Shared by summarize/run/batch."""
+    from formatters import to_json, to_telegram  # noqa: PLC0415
+
+    if output_format == "json":
+        from models import MeetingSummary  # noqa: PLC0415
+
+        return to_json(MeetingSummary(raw=raw, mode=mode_name))
+    return to_telegram(raw)
+
+
+def _summarize_or_exit(summarizer: LLMSummarizer, text: str) -> str:
+    """Run the summarizer, translating any failure into a clean CLI error + Exit(1)."""
+    try:
+        return summarizer.summarize(text)
+    except Exception as exc:
+        typer.echo(f"LLM error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
 def _ensure_output(path: Path) -> None:
     if path.is_dir():
         typer.echo(f"Error: output path is a directory: {path}", err=True)
@@ -84,7 +107,6 @@ def batch(
 ) -> None:
     """Process all audio files in a folder: transcribe and summarize each."""
     from config import PROVIDER_PRESETS, ConfigError, Settings  # noqa: PLC0415
-    from formatters import to_json, to_telegram  # noqa: PLC0415
     from preprocessing import prepared_audio  # noqa: PLC0415
     from providers.factory import make_summarizer, make_transcriber  # noqa: PLC0415
     from utils import write_text_atomic  # noqa: PLC0415
@@ -168,12 +190,7 @@ def batch(
                 succeeded += 1
                 continue
             raw = summarizer.summarize(tr.to_text())
-            if output_format == "json":
-                from models import MeetingSummary  # noqa: PLC0415
-
-                write_text_atomic(summary_path, to_json(MeetingSummary(raw=raw, mode=mode_name)))
-            else:
-                write_text_atomic(summary_path, to_telegram(raw))
+            write_text_atomic(summary_path, _format_summary(raw, output_format, mode_name))
             succeeded += 1
         except Exception as exc:
             typer.echo(f"  Error: {exc}", err=True)
@@ -316,7 +333,6 @@ def summarize(
     _ensure_output(output_path)
     logger.info("Summarizing: %s via %s (mode: %s)", transcript_path, provider_name, mode_name)
 
-    from formatters import to_json, to_telegram  # noqa: PLC0415
     from transcript import Transcript  # noqa: PLC0415
 
     try:
@@ -333,17 +349,8 @@ def summarize(
         settings.summarization.model.base_url or PROVIDER_PRESETS[provider_name], provider_name, settings.privacy_ack
     )
 
-    try:
-        raw = summarizer.summarize(tr.to_text())
-        if output_format == "json":
-            from models import MeetingSummary  # noqa: PLC0415
-
-            formatted = to_json(MeetingSummary(raw=raw, mode=mode_name))
-        else:
-            formatted = to_telegram(raw)
-    except Exception as exc:
-        typer.echo(f"LLM error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
+    raw = _summarize_or_exit(summarizer, tr.to_text())
+    formatted = _format_summary(raw, output_format, mode_name)
 
     typer.echo(formatted)
     logger.info("Writing summary to %s", output_path.resolve())
@@ -370,7 +377,6 @@ def run(
 ) -> None:
     """Run the full pipeline: transcribe audio, then summarize."""
     from config import PROVIDER_PRESETS, ConfigError, Settings  # noqa: PLC0415
-    from formatters import to_json, to_telegram  # noqa: PLC0415
 
     _configure_logging(verbose)
     try:
@@ -429,17 +435,8 @@ def run(
         settings.summarization.model.base_url or PROVIDER_PRESETS[provider_name], provider_name, settings.privacy_ack
     )
 
-    try:
-        raw = summarizer.summarize(tr.to_text())
-        if output_format == "json":
-            from models import MeetingSummary  # noqa: PLC0415
-
-            formatted = to_json(MeetingSummary(raw=raw, mode=mode_name))
-        else:
-            formatted = to_telegram(raw)
-    except Exception as exc:
-        typer.echo(f"LLM error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
+    raw = _summarize_or_exit(summarizer, tr.to_text())
+    formatted = _format_summary(raw, output_format, mode_name)
 
     typer.echo(formatted)
     _write_atomic(summary_path, formatted, "summary")
