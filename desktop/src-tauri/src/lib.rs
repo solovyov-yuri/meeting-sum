@@ -46,6 +46,15 @@ fn bridge_command(app: &AppHandle) -> Result<Command, String> {
         c
     };
     cmd.env("RECAP_DESKTOP_DATA_DIR", data_dir);
+
+    // REL-003: this is a GUI app (windows_subsystem = "windows"); without CREATE_NO_WINDOW,
+    // Windows opens a visible console for every bridge spawn (settings, history, each run…).
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+
     Ok(cmd)
 }
 
