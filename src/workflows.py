@@ -225,7 +225,9 @@ def run_one_file(
         with prepared_audio(audio_path, prep_cfg) as prepared:
             if prep_cfg.enabled:
                 emit(ProgressEvent(STEP_PREPROCESS, "success", "Аудио подготовлено."))
-            emit(ProgressEvent(STEP_TRANSCRIBE, "running", "Транскрибация началась.", percent=0.0))
+            # percent=None → indeterminate spinner until the first segment reports real progress
+            # (avoids the ring sitting at a literal "0%" while the model warms up / first chunk runs).
+            emit(ProgressEvent(STEP_TRANSCRIBE, "running", "Транскрибация началась.", percent=None))
 
             def on_segment(pct: float) -> None:  # CODE-006: real per-segment progress
                 emit(ProgressEvent(STEP_TRANSCRIBE, "running", f"Транскрибация… {int(pct * 100)}%", percent=pct))

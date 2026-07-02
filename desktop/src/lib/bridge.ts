@@ -291,7 +291,7 @@ function browserBridge(): Bridge {
         await delay(400);
         emit({ step: "preprocess", status: "success", message: "Аудио подготовлено.", percent: null, path: null });
       }
-      emit({ step: "transcribe", status: "running", message: "Транскрибация началась.", percent: 0, path: null });
+      emit({ step: "transcribe", status: "running", message: "Транскрибация началась.", percent: null, path: null });
       for (const p of [0.25, 0.55, 0.85]) {
         await delay(450);
         if (cancelled) break;
