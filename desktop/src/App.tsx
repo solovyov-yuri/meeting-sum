@@ -100,6 +100,7 @@ function Shell() {
             audioPath={recap.audioPath}
             runMode={recap.runMode}
             setRunMode={recap.setRunMode}
+            preprocessEnabled={recap.settings.preprocessing.enabled}
             steps={recap.steps}
             logs={recap.logs}
             result={recap.result}

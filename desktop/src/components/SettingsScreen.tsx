@@ -32,7 +32,25 @@ const RECOMMENDED_MODELS: Record<string, string[]> = {
 };
 
 // Known faster-whisper model names (offline list — Whisper models aren't served via an API).
-const WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v2", "large-v3", "large-v3-turbo", "distil-large-v3"];
+// From fastest/least accurate to slowest/most accurate, plus English-only (.en) and distilled variants.
+const WHISPER_MODELS = [
+  "tiny",
+  "tiny.en",
+  "base",
+  "base.en",
+  "small",
+  "small.en",
+  "medium",
+  "medium.en",
+  "large-v1",
+  "large-v2",
+  "large-v3",
+  "large-v3-turbo",
+  "distil-small.en",
+  "distil-medium.en",
+  "distil-large-v2",
+  "distil-large-v3",
+];
 const RECOMMENDED_WHISPER = "large-v3";
 
 interface SettingsScreenProps {

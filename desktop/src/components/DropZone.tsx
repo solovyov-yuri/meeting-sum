@@ -8,11 +8,15 @@ interface DropZoneProps {
   /** Browser fallback only — Tauri delivers real paths via the window drag-drop event. */
   onBrowserDrop?: (fileName: string) => void;
   dragActive?: boolean;
+  /** What kind of file this run mode expects — drives the wording. */
+  kind?: "audio" | "transcript";
 }
 
-export function DropZone({ onPick, onBrowserDrop, dragActive }: DropZoneProps) {
+export function DropZone({ onPick, onBrowserDrop, dragActive, kind = "audio" }: DropZoneProps) {
   const [hover, setHover] = useState(false);
   const active = hover || dragActive;
+  const title = kind === "transcript" ? "Выберите файл транскрипта" : "Выберите аудиофайл встречи";
+  const supports = kind === "transcript" ? "Поддерживается TXT." : "Поддерживаются WAV, MP3, M4A, OGG, MP4, MKV, WEBM, FLAC.";
 
   return (
     <div
@@ -37,9 +41,9 @@ export function DropZone({ onPick, onBrowserDrop, dragActive }: DropZoneProps) {
         {active ? <FileAudio className="h-6 w-6 text-accent" /> : <UploadCloud className="h-6 w-6 text-ink-muted" />}
       </span>
       <div>
-        <p className="text-lg font-medium text-ink">Выберите аудиофайл встречи</p>
+        <p className="text-lg font-medium text-ink">{title}</p>
         <p className="mt-1 text-base text-ink-muted">Перетащите файл сюда или нажмите, чтобы выбрать.</p>
-        <p className="mt-0.5 text-sm text-ink-muted">Поддерживаются WAV, MP3, M4A, OGG.</p>
+        <p className="mt-0.5 text-sm text-ink-muted">{supports}</p>
       </div>
       <Button
         variant="secondary"

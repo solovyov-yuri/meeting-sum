@@ -292,17 +292,23 @@ function browserBridge(): Bridge {
         emit({ step: "preprocess", status: "success", message: "Аудио подготовлено.", percent: null, path: null });
       }
       emit({ step: "transcribe", status: "running", message: "Транскрибация началась.", percent: 0, path: null });
-      for (const p of [25, 55, 85]) {
+      for (const p of [0.25, 0.55, 0.85]) {
         await delay(450);
         if (cancelled) break;
-        emit({ step: "transcribe", status: "running", message: `Транскрибация… ${p}%`, percent: p, path: null });
+        emit({
+          step: "transcribe",
+          status: "running",
+          message: `Транскрибация… ${Math.round(p * 100)}%`,
+          percent: p,
+          path: null,
+        });
       }
       const transcriptPath = req.transcript_path ?? "C:/recap/transcript.txt";
       emit({
         step: "transcribe",
         status: "success",
         message: `Транскрипт сохранён: ${transcriptPath}`,
-        percent: 100,
+        percent: 1,
         path: transcriptPath,
       });
       files[transcriptPath] = MOCK_TRANSCRIPT;

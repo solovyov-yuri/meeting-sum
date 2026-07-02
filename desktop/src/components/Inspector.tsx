@@ -64,8 +64,8 @@ function RunInspector({ settings, runMode }: InspectorProps) {
 
   const rows: [string, React.ReactNode][] = [["Режим", RUN_MODE_LABELS[runMode]]];
   if (usesTranscribe) {
-    rows.push(["Модель распознавания", settings.transcription.model.name]);
-    rows.push(["Язык распознавания", LANG_LABELS[settings.transcription.language] ?? settings.transcription.language]);
+    rows.push(["Модель транскрибации", settings.transcription.model.name]);
+    rows.push(["Язык транскрибации", LANG_LABELS[settings.transcription.language] ?? settings.transcription.language]);
   }
   if (usesSummarize) {
     rows.push(["Провайдер (саммари)", s.model.provider]);

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Segmented, Textarea, type SegmentedOption } from "@/components/ui/controls";
 import { cn, fileName } from "@/lib/utils";
-import { MODE_STEPS, type LogEntry, type Phase, type StepState } from "@/hooks/useRecap";
+import { visibleSteps, type LogEntry, type Phase, type StepState } from "@/hooks/useRecap";
 import type { RunMode, RunResult, StepName } from "@/lib/types";
 
 const MODE_OPTIONS: SegmentedOption<RunMode>[] = [
@@ -25,6 +25,7 @@ interface WorkspaceProps {
   audioPath: string | null;
   runMode: RunMode;
   setRunMode: (m: RunMode) => void;
+  preprocessEnabled: boolean;
   steps: Record<StepName, StepState>;
   logs: LogEntry[];
   result: RunResult | null;
@@ -55,7 +56,12 @@ export function Workspace(props: WorkspaceProps) {
     return (
       <main className="flex flex-1 flex-col gap-3 overflow-y-auto p-4 scrollbar-thin">
         <ModeBar runMode={props.runMode} setRunMode={props.setRunMode} disabled={false} />
-        <DropZone onPick={props.onPick} onBrowserDrop={props.onBrowserDrop} dragActive={props.dragActive} />
+        <DropZone
+          onPick={props.onPick}
+          onBrowserDrop={props.onBrowserDrop}
+          dragActive={props.dragActive}
+          kind={props.runMode === "summarize" ? "transcript" : "audio"}
+        />
         <p className="px-1 text-sm text-ink-muted">
           {props.runMode === "summarize"
             ? "Выберите файл транскрипта (.txt) и нажмите «Запустить»."
@@ -71,7 +77,7 @@ export function Workspace(props: WorkspaceProps) {
     <main className="flex flex-1 flex-col gap-3 overflow-hidden p-4">
       <ModeBar runMode={props.runMode} setRunMode={props.setRunMode} disabled={phase === "running"} />
       <FileHeader {...props} />
-      {showSteps && <ProgressSteps steps={steps} order={MODE_STEPS[props.runMode]} />}
+      {showSteps && <ProgressSteps steps={steps} order={visibleSteps(props.runMode, props.preprocessEnabled)} />}
       {phase === "done" && result && <ResultBanner result={result} onRetry={props.onRetry} onSwitchTranscript={() => setTab("transcript")} />}
 
       <div className="flex min-h-0 flex-1 flex-col rounded-card border border-border bg-panel">

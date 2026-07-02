@@ -24,6 +24,13 @@ export const MODE_STEPS: Record<RunMode, StepName[]> = {
   summarize: ["summarize", "export"],
 };
 
+// Steps actually shown for a run. Preprocessing is mandatory (always shown) only for the full
+// pipeline; in transcribe mode it runs — and shows — only when enabled in settings.
+export function visibleSteps(runMode: RunMode, preprocessEnabled: boolean): StepName[] {
+  if (runMode === "transcribe" && !preprocessEnabled) return ["transcribe"];
+  return MODE_STEPS[runMode];
+}
+
 export interface StepState {
   status: StepStatus;
   percent: number | null;

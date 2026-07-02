@@ -35,7 +35,8 @@ function ringBackground(status: StepStatus, percent: number | null): string {
       return WARNING;
     case "running": {
       if (percent != null) {
-        const deg = Math.max(0, Math.min(360, Math.round((percent / 100) * 360)));
+        // percent is a 0–1 fraction (matches ProgressEvent.percent from the backend).
+        const deg = Math.max(0, Math.min(360, Math.round(percent * 360)));
         return `conic-gradient(${ACCENT} ${deg}deg, ${BORDER_STRONG} ${deg}deg 360deg)`;
       }
       return ACCENT;
@@ -54,7 +55,7 @@ function StepCircle({ status, percent }: { status: StepStatus; percent: number |
   else if (status === "running")
     inner =
       percent != null ? (
-        <span className="text-[20px] font-semibold text-ink tabular-nums">{percent}%</span>
+        <span className="text-[20px] font-semibold text-ink tabular-nums">{Math.round(percent * 100)}%</span>
       ) : (
         <Loader2 className="h-6 w-6 animate-spin text-accent" />
       );
@@ -103,7 +104,9 @@ export function ProgressSteps({
                 (state.status === "pending" || state.status === "cancelled") && "text-ink-soft",
               )}
             >
-              {state.status === "running" && state.percent != null ? `${state.percent}%` : STATUS_LABELS[state.status]}
+              {state.status === "running" && state.percent != null
+                ? `${Math.round(state.percent * 100)}%`
+                : STATUS_LABELS[state.status]}
             </small>
           </div>
         );
