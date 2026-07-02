@@ -24,7 +24,7 @@ from typing import Any
 
 import secrets_store
 import workflows
-from config import PROVIDER_PRESETS, ConfigError, Settings
+from config import PROVIDER_PRESETS, Settings
 from utils import write_text_atomic
 from workflows import RunOptions
 
@@ -189,9 +189,7 @@ def save_settings(payload: dict[str, Any]) -> dict[str, Any]:
         tmp = Path(f.name)
         f.write(yaml_text)
     try:
-        Settings.load(tmp)
-    except ConfigError as exc:
-        raise ConfigError(str(exc)) from exc
+        Settings.load(tmp)  # ConfigError propagates unchanged to the bridge boundary
     finally:
         tmp.unlink(missing_ok=True)
 
@@ -352,6 +350,23 @@ def _settings_with_api_key(settings: Settings, provider: str) -> Settings:
     return dataclasses.replace(settings, summarization=summarization)
 
 
+def _maybe_emit_privacy_warning(
+    settings: Settings, provider: str, emit: workflows.ProgressCallback | None
+) -> None:
+    """Warn (once, via ``emit``) if the transcript will leave the machine for an external provider."""
+    if emit is None or settings.privacy_ack:
+        return
+    base_url = settings.summarization.model.base_url or PROVIDER_PRESETS.get(provider)
+    if workflows.is_external_provider(base_url, provider):
+        emit(
+            workflows.ProgressEvent(
+                workflows.STEP_SUMMARIZE,
+                "warning",
+                "Транскрипт будет отправлен во внешний сервис. Подтвердите это в настройках приватности.",
+            )
+        )
+
+
 def run_recap(
     payload: dict[str, Any],
     *,
@@ -368,15 +383,7 @@ def run_recap(
     provider = options.provider or settings.summarization.model.provider
     settings = _settings_with_api_key(settings, provider)
 
-    base_url = settings.summarization.model.base_url or PROVIDER_PRESETS.get(provider)
-    if emit is not None and workflows.is_external_provider(base_url, provider) and not settings.privacy_ack:
-        emit(
-            workflows.ProgressEvent(
-                workflows.STEP_SUMMARIZE,
-                "warning",
-                "Транскрипт будет отправлен во внешний сервис. Подтвердите это в настройках приватности.",
-            )
-        )
+    _maybe_emit_privacy_warning(settings, provider, emit)
 
     result = workflows.run_one_file(options, settings=settings, progress=emit, cancel=cancel)
     _record_history(options, provider, settings, result)
@@ -398,15 +405,7 @@ def resummarize(
     provider = options.provider or settings.summarization.model.provider
     settings = _settings_with_api_key(settings, provider)
 
-    base_url = settings.summarization.model.base_url or PROVIDER_PRESETS.get(provider)
-    if emit is not None and workflows.is_external_provider(base_url, provider) and not settings.privacy_ack:
-        emit(
-            workflows.ProgressEvent(
-                workflows.STEP_SUMMARIZE,
-                "warning",
-                "Транскрипт будет отправлен во внешний сервис. Подтвердите это в настройках приватности.",
-            )
-        )
+    _maybe_emit_privacy_warning(settings, provider, emit)
 
     result = workflows.resummarize_one(options, settings=settings, progress=emit)
     _record_history(options, provider, settings, result)
