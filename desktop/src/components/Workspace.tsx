@@ -99,9 +99,12 @@ function FileHeader({ phase, audioPath, result, onStart, onCancel }: WorkspacePr
         <p className="mt-0.5 truncate text-base text-ink-muted">{audioPath}</p>
       </div>
       {phase === "running" ? (
-        <Button variant="danger" size="lg" onClick={onCancel}>
-          <Square className="h-4 w-4" /> Остановить
-        </Button>
+        <div className="flex flex-col items-end gap-1">
+          <Button variant="danger" size="lg" onClick={onCancel}>
+            <Square className="h-4 w-4" /> Остановить
+          </Button>
+          <span className="text-xs text-ink-muted">Остановка произойдёт после завершения текущего этапа</span>
+        </div>
       ) : phase === "done" && result ? (
         <span
           className={cn(
