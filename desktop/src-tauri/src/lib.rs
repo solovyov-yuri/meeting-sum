@@ -14,9 +14,11 @@
 //! The app's data directory is passed to the bridge via `RECAP_DESKTOP_DATA_DIR`.
 
 use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -175,7 +177,29 @@ async fn resummarize(app: AppHandle, state: State<'_, RunState>, req: Value) -> 
         .map_err(|e| e.to_string())?
 }
 
+/// Per-run path for the cooperative cancellation flag file (ARCH-002). Unique per run so a
+/// stale flag from a previous run can never auto-cancel the next one.
+fn cancel_flag_path() -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    std::env::temp_dir().join(format!("recap-cancel-{}-{}.flag", std::process::id(), nanos))
+}
+
 fn streaming_blocking(app: &AppHandle, cancel: Arc<AtomicBool>, command: &str, req: Value) -> Result<Value, String> {
+    // Cooperative cancellation: the bridge polls this flag file between stages. On cancel we
+    // create the file and let the bridge unwind normally — it returns a real
+    // RunResult("cancelled") (transcript path preserved) and records history. No kill(), so
+    // Python's `finally` blocks run (no orphaned temp WAV / stranded ffmpeg).
+    let flag_path = cancel_flag_path();
+    let _ = std::fs::remove_file(&flag_path); // never start with a stale flag
+
+    let mut req = req;
+    if let Some(obj) = req.as_object_mut() {
+        obj.insert("cancel_flag".to_string(), json!(flag_path.to_string_lossy()));
+    }
+
     let mut cmd = bridge_command(app)?;
     cmd.arg(command)
         .stdin(Stdio::piped())
@@ -190,16 +214,37 @@ fn streaming_blocking(app: &AppHandle, cancel: Arc<AtomicBool>, command: &str, r
             .map_err(|e| e.to_string())?;
     } // close stdin so the bridge starts processing
 
+    // Watcher thread: write the flag file the moment the user cancels, even while the main
+    // thread is blocked reading a long silent transcription stage (no progress lines).
+    let watcher_done = Arc::new(AtomicBool::new(false));
+    let watcher = {
+        let cancel = cancel.clone();
+        let done = watcher_done.clone();
+        let flag_path = flag_path.clone();
+        std::thread::spawn(move || {
+            while !done.load(Ordering::SeqCst) {
+                if cancel.load(Ordering::SeqCst) {
+                    let _ = std::fs::write(&flag_path, b"1");
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        })
+    };
+
     let stdout = child.stdout.take().ok_or("Нет stdout у процесса bridge")?;
     let reader = BufReader::new(stdout);
 
     let mut final_result: Option<Value> = None;
+    let mut stream_error: Option<String> = None;
     for line in reader.lines() {
-        if cancel.load(Ordering::SeqCst) {
-            let _ = child.kill();
-            break;
-        }
-        let line = line.map_err(|e| e.to_string())?;
+        let line = match line {
+            Ok(l) => l,
+            Err(e) => {
+                stream_error = Some(e.to_string());
+                break;
+            }
+        };
         if line.trim().is_empty() {
             continue;
         }
@@ -217,28 +262,25 @@ fn streaming_blocking(app: &AppHandle, cancel: Arc<AtomicBool>, command: &str, r
                 final_result = value.get("result").cloned();
             }
             Some("error") => {
-                let _ = child.wait();
-                return Err(value
-                    .get("error")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Ошибка выполнения")
-                    .to_string());
+                stream_error = Some(
+                    value
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Ошибка выполнения")
+                        .to_string(),
+                );
+                break;
             }
             _ => {}
         }
     }
     let _ = child.wait();
+    watcher_done.store(true, Ordering::SeqCst);
+    let _ = watcher.join();
+    let _ = std::fs::remove_file(&flag_path);
 
-    if cancel.load(Ordering::SeqCst) {
-        return Ok(json!({
-            "status": "cancelled",
-            "transcript_path": null,
-            "summary_path": null,
-            "summary_json_path": null,
-            "transcript_text": null,
-            "summary_text": null,
-            "error_message": "Остановлено пользователем."
-        }));
+    if let Some(err) = stream_error {
+        return Err(err);
     }
     final_result.ok_or_else(|| "Не получен результат от bridge".to_string())
 }
