@@ -1,8 +1,15 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@config "../tailwind.config.js";
 
 @layer base {
+  /* Tailwind v4 defaults the bare `border`/`divide` utilities to currentColor; restore the
+     design's border token so existing `border` usages look as they did under v3 (DEP-002). */
+  *,
+  ::after,
+  ::before {
+    border-color: var(--color-border, #e3e6ea);
+  }
+
   :root {
     color-scheme: light;
   }
