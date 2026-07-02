@@ -19,7 +19,7 @@
 | [AGENT-001](issues/AGENT-001.md) | Скилл project-review: нет references/assets; 3 копии | high | small | done | 2026-07-02: скилл сделан глобальным (Windows-home канонический + symlink в WSL-home), 5 файлов references/assets созданы, проектная копия удалена |
 | [AGENT-002](issues/AGENT-002.md) | CLAUDE.md/AGENTS.md: desktop-слой невидим, ложное правило boundary | high | small | done | 2026-07-02: карта +workflows/desktop_bridge/secrets_store/desktop; 3 boundary вместо ложного одного |
 | [AGENT-006](issues/AGENT-006.md) | Ложный отчёт о верификации; правила нет в checked-in файлах | high | small | done | 2026-07-02: правило честной верификации добавлено в AGENTS.md |
-| [ARCH-001](issues/ARCH-001.md) | Пайплайн продублирован между cli.py и workflows.py | high | medium | proposed | |
+| [ARCH-001](issues/ARCH-001.md) | Пайплайн продублирован между cli.py и workflows.py | high | medium | in-progress | 2026-07-02: опции 2+3 — общий хвост вынесен, расхождение задокументировано; полная унификация (опция 1) отложена (нужен i18n) |
 | [ARCH-003](issues/ARCH-003.md) | output_formats — мёртвый вход контракта | medium | quick-win | proposed | |
 | [ARCH-004](issues/ARCH-004.md) | stderr моста в null — логов нет | medium | quick-win | proposed | |
 | [SEC-002](issues/SEC-002.md) | CSP отключён в Tauri | medium | quick-win | in-progress | 2026-07-02: строгий CSP задан; не проверен в webview (dev+prod) |
@@ -37,9 +37,9 @@
 | [AGENT-007](issues/AGENT-007.md) | Граница WSL/Windows-проверок не документирована | medium | small | done | 2026-07-02: раздел про WSL vs Windows-проверки в AGENTS.md |
 | [DEP-003](issues/DEP-003.md) | CUDA-wheels безусловные (~2 ГБ; вероятно ломают macOS) | medium | medium | proposed | |
 | [PERF-001](issues/PERF-001.md) | Whisper-модель перезагружается на каждый десктоп-запуск | medium | large | proposed | |
-| [CODE-002](issues/CODE-002.md) | run_one_file строит summarizer дважды | low | quick-win | proposed | |
-| [CODE-003](issues/CODE-003.md) | Мёртвые transcribe_audio/summarize_transcript | low | quick-win | proposed | вместе с ARCH-001 |
-| [CODE-004](issues/CODE-004.md) | Мелкий копипаст (дубликат в кортеже, no-op re-raise и др.) | low | quick-win | proposed | |
+| [CODE-002](issues/CODE-002.md) | run_one_file строит summarizer дважды | low | quick-win | done | 2026-07-02: summarizer строится один раз и передаётся в _summarize_and_export |
+| [CODE-003](issues/CODE-003.md) | Мёртвые transcribe_audio/summarize_transcript | low | quick-win | done | 2026-07-02: удалены (без вызовов); спека обновлена |
+| [CODE-004](issues/CODE-004.md) | Мелкий копипаст (дубликат в кортеже, no-op re-raise и др.) | low | quick-win | done | 2026-07-02: 4 пункта — tuple, re-raise, privacy-helper, pushHistory |
 | [REL-005](issues/REL-005.md) | write_text_atomic: нет fsync; утечка tmp при сбое | low | quick-win | done | 2026-07-02: flush+fsync до rename, unlink tmp при сбое write; тест |
 | [REL-007](issues/REL-007.md) | SSE-ошибки посреди стрима мимо retry | low | quick-win | done | 2026-07-02: httpx.HTTPError добавлен в _RETRYABLE; тест на mid-stream |
 | [REL-008](issues/REL-008.md) | _ensure_output mkdir вне error boundary | low | quick-win | done | 2026-07-02: mkdir в try/except OSError→Exit(1); тест |
@@ -92,3 +92,12 @@ drag-and-drop `.mp4` в запущенном десктоп-приложении
 свежей сессии — нужен один взгляд пользователя. AGENT-005 — не сделано: правка allowlist в
 `.claude/settings.local.json` заблокирована классификатором как само-модификация прав; сделать через
 `/update-config` или `/fewer-permission-prompts` с явного согласия. pytest 310, ruff/mypy — зелёные.
+
+2026-07-02 — ARCH-001 — in-progress. Приняты варианты 2+3: общий хвост summarize→format→write в
+`cli.py` вынесен в `_summarize_or_exit`/`_format_summary`; расхождение CLI↔desktop (язык сообщений,
+один файл на --format vs .txt+.json) задокументировано в spec §4 и AGENTS.md как намеренное. Заодно
+CODE-002/003/004 закрыты. Полная унификация CLI через `run_one_file` (вариант 1) отложена — требует
+i18n сообщений и смены семантики выходных файлов CLI (решение владельца). Открытый под-вопрос: пустая
+транскрипция трактуется по-разному в `batch` (успех) vs `run`/`run_one_file` (ошибка) — унификация
+изменит поведение `batch`. pytest 310, ruff/mypy зелёные, фронт tsc+eslint чисто, CLI-путь summarize
+проверен вживую (чистая ошибка LLM + exit 1).
