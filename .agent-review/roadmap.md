@@ -15,7 +15,7 @@
 | [SEC-001](issues/SEC-001.md) | Живой API-ключ в открытом виде в config.yaml | high | quick-win | done | 2026-07-02: ключ убран из config.yaml, старый ротирован, ключ через env |
 | [REL-001](issues/REL-001.md) | UnicodeDecodeError не перехватывается при чтении транскрипта | high | quick-win | done | 2026-07-02: ловим (OSError, UnicodeDecodeError) в cli.py+workflows.py; тесты на оба пути |
 | [REL-004](issues/REL-004.md) | Десктоп отклоняет .mp4 — реальный формат пользователя | high | quick-win | done | 2026-07-02: общая AUDIO_EXTENSIONS (+mp4/mkv/webm/flac), синк bridge.ts; drag-in-app вручную не проверял |
-| [ARCH-002](issues/ARCH-002.md) | Отмена: kill вместо кооперативной; потеря истории/транскрипта | high | small | proposed | |
+| [ARCH-002](issues/ARCH-002.md) | Отмена: kill вместо кооперативной; потеря истории/транскрипта | high | small | in-progress | кооперативная отмена реализована; Rust-половина не скомпилирована здесь — нужна сборка/тест |
 | [AGENT-001](issues/AGENT-001.md) | Скилл project-review: нет references/assets; 3 копии | high | small | done | 2026-07-02: скилл сделан глобальным (Windows-home канонический + symlink в WSL-home), 5 файлов references/assets созданы, проектная копия удалена |
 | [AGENT-002](issues/AGENT-002.md) | CLAUDE.md/AGENTS.md: desktop-слой невидим, ложное правило boundary | high | small | proposed | |
 | [AGENT-006](issues/AGENT-006.md) | Ложный отчёт о верификации; правила нет в checked-in файлах | high | small | proposed | |
@@ -70,6 +70,15 @@
 2026-07-02 — REL-001 — done. Вариант 1: чтение транскрипта ловит `(OSError, UnicodeDecodeError)` в
 `cli.py summarize` и `workflows.resummarize_one`. Регрессионные тесты на cp1251 в test_cli.py и
 test_workflows.py. ruff/mypy/pytest — зелёные (301 passed).
+
+2026-07-02 — ARCH-002 — in-progress. Вариант 1 (кооперативная отмена через flag-файл): Rust
+создаёт уникальный `cancel_flag` и watcher-потоком пишет его по «Остановить»; мост строит
+`cancel = Path(flag).exists` и передаёт в `run_one_file`; Rust дочитывает stdout до реального
+`cancelled`-результата (kill убран → `finally` в Python отрабатывает, транскрипт и запись истории
+сохраняются). Добавлен UI-текст про границу этапа; §6 контракта обновлён. Python-половина покрыта
+тестами (test_desktop_bridge, test_workflows), ruff/mypy/pytest — зелёные (303), фронт tsc+eslint —
+чисто. НЕ проверено: компиляция Rust (нет cargo здесь) и реальная отмена в запущенном приложении.
+Перевести в `done` после `cargo build` + ручной проверки «Остановить» посреди длинной транскрибации.
 
 2026-07-02 — REL-004 — done. Вариант 1: единая константа `AUDIO_EXTENSIONS` в `workflows.py`
 (+`.mp4 .mkv .webm .flac`), `cli.py` импортирует её (дубль удалён), фильтр в `bridge.ts`
