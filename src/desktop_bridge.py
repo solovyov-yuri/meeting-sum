@@ -47,6 +47,35 @@ def _data_dir() -> Path:
     return base
 
 
+def _configure_logging() -> None:
+    """Bridge logging: warnings+ to stderr (plain), and full detail to a rotating log file in the
+    data dir (ARCH-004). Field problems (CUDA/keyring/LLM tracebacks from ``logger.exception``)
+    thus land somewhere inspectable. Logging setup must never break the bridge itself.
+    """
+    from logging.handlers import RotatingFileHandler  # noqa: PLC0415
+
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.setLevel(logging.INFO)
+
+    stderr_h = logging.StreamHandler(sys.stderr)
+    stderr_h.setLevel(logging.WARNING)
+    stderr_h.setFormatter(logging.Formatter("%(message)s"))
+    root.addHandler(stderr_h)
+
+    try:
+        log_dir = _data_dir() / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        file_h = RotatingFileHandler(
+            log_dir / "recap-bridge.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8"
+        )
+        file_h.setLevel(logging.INFO)
+        file_h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        root.addHandler(file_h)
+    except OSError:
+        logger.warning("Could not open bridge log file; logging to stderr only.")
+
+
 def _config_path() -> Path:
     return _data_dir() / "config.yaml"
 
@@ -297,16 +326,43 @@ def get_history() -> dict[str, Any]:
     return {"items": _read_history()}
 
 
+def _history_referenced_paths() -> set[Path]:
+    """Resolved result-file paths the history legitimately points at."""
+    allowed: set[Path] = set()
+    for it in _read_history():
+        for key in ("transcript_path", "summary_path", "summary_json_path"):
+            value = it.get(key)
+            if value:
+                with contextlib.suppress(OSError):
+                    allowed.add(Path(value).resolve())
+    return allowed
+
+
+def _is_readable_path(p: Path) -> bool:
+    """read_text is scoped (SEC-003) to files the UI legitimately re-opens: history-referenced
+    result files, or anything under the app data dir. Everything else is denied so a webview XSS
+    cannot turn read_text into an arbitrary-file read."""
+    try:
+        resolved = p.resolve()
+    except OSError:
+        return False
+    data = _data_dir().resolve()
+    if resolved == data or data in resolved.parents:
+        return True
+    return resolved in _history_referenced_paths()
+
+
 def read_text(path: str | None) -> dict[str, Any]:
-    """Read a result file from disk (used to re-open a history entry). Missing → empty."""
+    """Read a result file from disk (used to re-open a history entry). Out-of-scope or missing → empty."""
     if not path:
         return {"text": None, "exists": False}
     p = Path(path)
-    if not p.exists():
+    # Out-of-scope is reported like "missing" — no path/existence info leaks to the webview.
+    if not _is_readable_path(p) or not p.exists():
         return {"text": None, "exists": False}
     try:
         return {"text": p.read_text(encoding="utf-8"), "exists": True}
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         return {"text": None, "exists": False, "error": str(exc)}
 
 
@@ -337,7 +393,10 @@ def export_summary(payload: dict[str, Any]) -> dict[str, Any]:
     base_name = payload["base_name"]
     mode = payload.get("mode") or "medium"
 
-    target_dir.mkdir(parents=True, exist_ok=True)
+    # SEC-003: export only into an existing directory (the save dialog returns one); do not
+    # create arbitrary directory trees at a webview-supplied path.
+    if not target_dir.is_dir():
+        raise ValueError(f"Каталог для экспорта не существует: {target_dir}")
     out: dict[str, Any] = {"telegram_path": None, "plain_path": None, "json_path": None}
 
     if "telegram" in formats:
@@ -518,7 +577,7 @@ def _streaming(command: str, payload: dict[str, Any]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    logging.basicConfig(level=logging.WARNING, format="%(message)s", stream=sys.stderr)
+    _configure_logging()
     args = sys.argv[1:] if argv is None else argv
     if not args:
         _emit_line({"error": "Команда не указана."})

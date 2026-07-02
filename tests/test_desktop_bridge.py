@@ -105,6 +105,7 @@ def test_set_api_key_unknown_provider() -> None:
 
 def test_export_summary_writes_requested_formats(tmp_path: Path) -> None:
     out = tmp_path / "out"
+    out.mkdir()  # SEC-003: export requires an existing directory
     res = desktop_bridge.export_summary(
         {
             "summary_text": "## Тема\n1. пункт",
@@ -289,12 +290,64 @@ def test_read_text_missing(tmp_path: Path) -> None:
     assert res == {"text": None, "exists": False}
 
 
-def test_read_text_existing(tmp_path: Path) -> None:
-    f = tmp_path / "t.txt"
+def test_read_text_existing(data_dir: Path) -> None:
+    # A file under the app data dir is in scope (SEC-003).
+    f = desktop_bridge._data_dir() / "t.txt"
     f.write_text("привет", encoding="utf-8")
     res = desktop_bridge.read_text(str(f))
     assert res["exists"] is True
     assert res["text"] == "привет"
+
+
+def test_read_text_history_referenced_is_in_scope(tmp_path: Path, data_dir: Path) -> None:
+    # SEC-003: a file the history points at is readable even outside the data dir.
+    f = tmp_path / "summary.txt"
+    f.write_text("итог", encoding="utf-8")
+    desktop_bridge._append_history({"id": "h1", "summary_path": str(f)})
+    res = desktop_bridge.read_text(str(f))
+    assert res == {"text": "итог", "exists": True}
+
+
+def test_read_text_out_of_scope_denied(tmp_path: Path, data_dir: Path) -> None:
+    # SEC-003: an existing file that is neither under the data dir nor history-referenced is
+    # denied, reported like "missing" (no info leak).
+    f = tmp_path / "secret.txt"
+    f.write_text("секрет", encoding="utf-8")
+    assert desktop_bridge.read_text(str(f)) == {"text": None, "exists": False}
+
+
+def test_read_text_binary_in_scope_handled(data_dir: Path) -> None:
+    # REL side of SEC-003: a non-UTF-8 file in scope fails cleanly, not with a raw traceback.
+    f = desktop_bridge._data_dir() / "blob.bin"
+    f.write_bytes(b"\xff\xfe\x00\x01")
+    res = desktop_bridge.read_text(str(f))
+    assert res["exists"] is False
+    assert "error" in res
+
+
+def test_export_summary_missing_dir_raises(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="не существует"):
+        desktop_bridge.export_summary(
+            {"summary_text": "x", "formats": ["json"], "target_dir": str(tmp_path / "nope"), "base_name": "m"}
+        )
+
+
+def test_configure_logging_writes_file(data_dir: Path) -> None:
+    # ARCH-004: bridge logging lands in a rotating file under the data dir.
+    import logging
+
+    saved = logging.getLogger().handlers[:]
+    try:
+        desktop_bridge._configure_logging()
+        logging.getLogger("recap.test").error("boom")
+        logging.shutdown()
+        log_file = desktop_bridge._data_dir() / "logs" / "recap-bridge.log"
+        assert log_file.exists()
+        assert "boom" in log_file.read_text(encoding="utf-8")
+    finally:
+        root = logging.getLogger()
+        root.handlers.clear()
+        root.handlers.extend(saved)
 
 
 def test_read_text_none() -> None:
