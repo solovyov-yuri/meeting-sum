@@ -252,6 +252,15 @@ Final output:
 }
 ```
 
+### `resummarize`
+
+**Streaming** (second NDJSON channel besides `run_recap`). Re-runs only summarization on an existing
+transcript — the partial_success recovery path («Повторить суммаризацию»); never re-transcribes.
+
+Input: same shape as `run_recap`, but `transcript_path` must point at an existing transcript on disk
+(`audio_path` is carried for history metadata only, not read). Progress events and the final output
+object are identical to `run_recap`.
+
 ### `export_summary`
 
 Input:
@@ -301,6 +310,41 @@ Output:
 ```
 
 Удаляет только запись истории, не файлы.
+
+### `test_connection`
+
+Проверяет доступность LLM-провайдера с сохранёнными настройками/ключом.
+
+Input:
+
+```json
+{ "provider": "openai" }
+```
+
+Output:
+
+```json
+{ "ok": true, "message": "Подключение успешно." }
+```
+
+### `read_text`
+
+Читает файл результата с диска (используется, чтобы заново открыть запись истории). Отсутствующий
+файл — не ошибка.
+
+Input:
+
+```json
+{ "path": "C:/.../summary.txt" }
+```
+
+Output:
+
+```json
+{ "text": "...", "exists": true }
+```
+
+Отсутствующий файл: `{ "text": null, "exists": false }`; ошибка чтения добавляет `"error"`.
 
 ## 5. Secrets
 

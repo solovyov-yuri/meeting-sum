@@ -22,8 +22,8 @@ React UI ──invoke──▶ Rust commands (src-tauri/src/lib.rs)
 - One-shot commands (`get_settings`, `save_settings`, `set_api_key`, `delete_api_key`,
   `test_connection`, `get_history`, `delete_history_item`, `export_summary`, `read_text`)
   exchange a single JSON object.
-- `run_recap` streams newline-delimited JSON: each `{"type":"progress"}` line is re-emitted
-  to the webview as a `recap-progress` event; the final `{"type":"result"}` line is returned.
+- `run_recap` and `resummarize` stream newline-delimited JSON: each `{"type":"progress"}` line is
+  re-emitted to the webview as a `recap-progress` event; the final `{"type":"result"}` line is returned.
 - API keys are stored in the OS keychain via Python `keyring`; they never reach `config.yaml`,
   the history JSON, or the UI (only a masked "saved / not saved" state is shown).
 - Desktop state (a dedicated `config.yaml` + `history.json`) lives in the Tauri app-data
