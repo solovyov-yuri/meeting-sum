@@ -11,6 +11,7 @@
 //!   - `RECAP_BRIDGE_BIN`  full path to an installed `recap-bridge` executable; or
 //!   - `RECAP_PYTHON`      python executable (default: `python`) used with `-m desktop_bridge`,
 //!     together with `RECAP_SRC` (added to `PYTHONPATH`).
+//!
 //! The app's data directory is passed to the bridge via `RECAP_DESKTOP_DATA_DIR`.
 
 use std::io::{BufRead, BufReader, Write};
@@ -79,7 +80,7 @@ fn run_bridge(app: &AppHandle, command: &str, payload: Value) -> Result<Value, S
     let last = stdout
         .lines()
         .filter(|l| !l.trim().is_empty())
-        .last()
+        .next_back()
         .ok_or("Пустой ответ от bridge")?;
     let value: Value = serde_json::from_str(last).map_err(|e| format!("Некорректный ответ bridge: {e}"))?;
     if let Some(err) = value.get("error").and_then(|v| v.as_str()) {
