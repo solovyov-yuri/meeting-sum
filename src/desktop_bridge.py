@@ -491,6 +491,57 @@ def export_summary(payload: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def check_model() -> dict[str, Any]:
+    """Report whether the configured summarization model is available (Ollama pull check).
+
+    Only Ollama can pull models; for other providers (and when Ollama is unreachable) this returns
+    ``installed: True`` so the run proceeds and surfaces any real error itself.
+    """
+    from config import PROVIDER_PRESETS  # noqa: PLC0415
+
+    settings = _load_settings()
+    model_cfg = settings.summarization.model
+    provider = model_cfg.provider
+    model = model_cfg.name
+    base_url = model_cfg.base_url or PROVIDER_PRESETS.get(provider)
+    out: dict[str, Any] = {"installed": True, "provider": provider, "model": model, "base_url": base_url}
+    if provider != "ollama" or not base_url:
+        return out
+    import ollama_support  # noqa: PLC0415
+
+    try:
+        out["installed"] = ollama_support.model_installed(base_url, model)
+    except Exception:  # noqa: BLE001 - Ollama unreachable → don't block; the run surfaces it
+        logger.warning("Ollama model check failed", exc_info=True)
+    return out
+
+
+def pull_model(payload: dict[str, Any], *, emit: Any, cancel: Any) -> workflows.RunResult:
+    """Streaming: pull the Ollama model, reporting progress as a ``download`` step."""
+    import ollama_support  # noqa: PLC0415
+
+    base_url = payload["base_url"]
+    model = payload["model"]
+
+    def on_progress(completed: int, total: int, status: str) -> None:
+        pct = (completed / total) if total else None
+        emit(workflows.ProgressEvent(workflows.STEP_DOWNLOAD, "running", status or "Загрузка модели…", percent=pct))
+
+    emit(workflows.ProgressEvent(workflows.STEP_DOWNLOAD, "running", f"Загрузка модели {model}…", percent=None))
+    try:
+        ollama_support.pull_model(base_url, model, on_progress, cancel)
+    except ollama_support.PullCancelled:
+        emit(workflows.ProgressEvent(workflows.STEP_DOWNLOAD, "cancelled", "Загрузка модели отменена."))
+        return workflows.RunResult("cancelled", None, None, None, None, None, "Загрузка модели отменена.")
+    except Exception as exc:  # noqa: BLE001 - boundary
+        logger.exception("Model pull failed")
+        msg = f"Не удалось загрузить модель: {workflows.humanize_error(exc)}"
+        emit(workflows.ProgressEvent(workflows.STEP_DOWNLOAD, "error", msg))
+        return workflows.RunResult("failed", None, None, None, None, None, msg)
+    emit(workflows.ProgressEvent(workflows.STEP_DOWNLOAD, "success", "Модель загружена."))
+    return workflows.RunResult("success", None, None, None, None, None, None)
+
+
 def save_summary(payload: dict[str, Any]) -> dict[str, Any]:
     """Persist the edited summary: overwrite the canonical Markdown ``.txt`` and re-derive the
     structured ``.json`` from it (parse Markdown → object → JSON). Mirrors what a run writes, so
@@ -677,6 +728,7 @@ def _emit_line(obj: dict[str, Any]) -> None:
 _STREAMING_COMMANDS = {
     "run_recap": run_recap,
     "resummarize": resummarize,
+    "pull_model": pull_model,
 }
 
 
@@ -795,6 +847,8 @@ def main(argv: list[str] | None = None) -> int:
             out = export_summary(payload)
         elif command == "save_summary":
             out = save_summary(payload)
+        elif command == "check_model":
+            out = check_model()
         elif command == "get_history":
             out = get_history()
         elif command == "read_text":

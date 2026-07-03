@@ -154,3 +154,15 @@ export interface SaveSummaryResult {
   summary_path: string;
   json_path: string;
 }
+
+export interface ModelStatus {
+  installed: boolean;
+  provider: string;
+  model: string;
+  base_url: string | null;
+}
+
+export interface PullModelRequest {
+  model: string;
+  base_url: string;
+}

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Inspector } from "@/components/Inspector";
+import { ModelDownloadDialog } from "@/components/ModelDownloadDialog";
 import { SettingsScreen } from "@/components/SettingsScreen";
 import { Sidebar } from "@/components/Sidebar";
 import { ToastProvider } from "@/components/ui/toast";
@@ -126,6 +127,14 @@ function Shell() {
           />
         </>
       )}
+
+      <ModelDownloadDialog
+        prompt={recap.modelPrompt}
+        pull={recap.modelPull}
+        onConfirm={recap.confirmModelDownload}
+        onCancelPull={recap.cancelModelDownload}
+        onDismiss={recap.dismissModelPrompt}
+      />
     </div>
   );
 }

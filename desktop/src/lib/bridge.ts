@@ -7,7 +7,9 @@ import type {
   ExportRequest,
   ExportResult,
   HistoryItem,
+  ModelStatus,
   ProgressEvent,
+  PullModelRequest,
   RunRequest,
   RunResult,
   SaveSummaryRequest,
@@ -32,6 +34,8 @@ export interface Bridge {
   readText(path: string | null): Promise<{ text: string | null; exists: boolean }>;
   exportSummary(req: ExportRequest): Promise<ExportResult>;
   saveSummary(req: SaveSummaryRequest): Promise<SaveSummaryResult>;
+  checkModel(): Promise<ModelStatus>;
+  pullModel(req: PullModelRequest, onProgress: ProgressHandler): Promise<RunResult>;
   runRecap(req: RunRequest, onProgress: ProgressHandler): Promise<RunResult>;
   resummarize(req: RunRequest, onProgress: ProgressHandler): Promise<RunResult>;
   cancelRun(): Promise<void>;
@@ -61,6 +65,15 @@ async function tauriBridge(): Promise<Bridge> {
     readText: (path) => invoke<{ text: string | null; exists: boolean }>("read_text", { path }),
     exportSummary: (req) => invoke<ExportResult>("export_summary", { req }),
     saveSummary: (req) => invoke<SaveSummaryResult>("save_summary", { req }),
+    checkModel: () => invoke<ModelStatus>("check_model"),
+    async pullModel(req, onProgress) {
+      const unlisten = await listen<ProgressEvent>("model-pull-progress", (e) => onProgress(e.payload));
+      try {
+        return await invoke<RunResult>("pull_model", { req });
+      } finally {
+        unlisten();
+      }
+    },
     cancelRun: () => invoke("cancel_run"),
     async runRecap(req, onProgress) {
       const unlisten = await listen<ProgressEvent>("recap-progress", (e) => onProgress(e.payload));
@@ -183,6 +196,7 @@ function browserBridge(): Bridge {
   let history: HistoryItem[] = [];
   const files: Record<string, string> = {};
   let cancelled = false;
+  let mockModelInstalled = false;
 
   const pushHistory = (req: RunRequest, result: RunResult, provider: string, name: string) => {
     history = [
@@ -266,6 +280,20 @@ function browserBridge(): Bridge {
       files[req.summary_path] = req.summary_text;
       files[jsonPath] = JSON.stringify({ mode: req.mode, edited: true });
       return { summary_path: req.summary_path, json_path: jsonPath };
+    },
+    async checkModel() {
+      await delay(60);
+      return { installed: mockModelInstalled, provider: "ollama", model: settings.summarization.model.name, base_url: "http://localhost:11434/v1" };
+    },
+    async pullModel(req, onProgress) {
+      cancelled = false;
+      for (const pct of [0.2, 0.5, 0.8, 1]) {
+        if (cancelled) return { status: "cancelled", transcript_path: null, summary_path: null, summary_json_path: null, transcript_text: null, summary_text: null, error_message: "Отменено" };
+        await delay(250);
+        onProgress({ step: "download", status: "running", message: `Загрузка ${req.model}…`, percent: pct, path: null });
+      }
+      mockModelInstalled = true;
+      return { status: "success", transcript_path: null, summary_path: null, summary_json_path: null, transcript_text: null, summary_text: null, error_message: null };
     },
     async cancelRun() {
       cancelled = true;

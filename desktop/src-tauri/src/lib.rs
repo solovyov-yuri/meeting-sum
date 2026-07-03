@@ -197,6 +197,23 @@ async fn save_summary(app: AppHandle, req: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
+async fn check_model(app: AppHandle) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || run_bridge(&app, "check_model", json!({})))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+// Streaming (own progress channel `model-pull-progress`), cancellable via the shared run cancel.
+#[tauri::command]
+async fn pull_model(app: AppHandle, state: State<'_, RunState>, req: Value) -> Result<Value, String> {
+    state.cancel.store(false, Ordering::SeqCst);
+    let cancel = state.cancel.clone();
+    tauri::async_runtime::spawn_blocking(move || streaming_blocking(&app, cancel, "pull_model", req, "model-pull-progress"))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn read_text(app: AppHandle, path: Option<String>) -> Result<Value, String> {
     let payload = json!({ "path": path });
     tauri::async_runtime::spawn_blocking(move || run_bridge(&app, "read_text", payload))
@@ -230,7 +247,7 @@ async fn run_recap(app: AppHandle, state: State<'_, RunState>, req: Value) -> Re
                     let _ = w.child.kill();
                 }
             }
-            streaming_blocking(&app, cancel, "run_recap", req)
+            streaming_blocking(&app, cancel, "run_recap", req, "recap-progress")
         }
     })
     .await
@@ -241,7 +258,7 @@ async fn run_recap(app: AppHandle, state: State<'_, RunState>, req: Value) -> Re
 async fn resummarize(app: AppHandle, state: State<'_, RunState>, req: Value) -> Result<Value, String> {
     state.cancel.store(false, Ordering::SeqCst);
     let cancel = state.cancel.clone();
-    tauri::async_runtime::spawn_blocking(move || streaming_blocking(&app, cancel, "resummarize", req))
+    tauri::async_runtime::spawn_blocking(move || streaming_blocking(&app, cancel, "resummarize", req, "recap-progress"))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -276,7 +293,13 @@ fn spawn_flag_watcher(cancel: Arc<AtomicBool>, flag_path: PathBuf) -> (Arc<Atomi
     (done, handle)
 }
 
-fn streaming_blocking(app: &AppHandle, cancel: Arc<AtomicBool>, command: &str, req: Value) -> Result<Value, String> {
+fn streaming_blocking(
+    app: &AppHandle,
+    cancel: Arc<AtomicBool>,
+    command: &str,
+    req: Value,
+    progress_event: &str,
+) -> Result<Value, String> {
     // Cooperative cancellation: the bridge polls this flag file between stages. On cancel we
     // create the file and let the bridge unwind normally — it returns a real
     // RunResult("cancelled") (transcript path preserved) and records history. No kill(), so
@@ -328,7 +351,7 @@ fn streaming_blocking(app: &AppHandle, cancel: Arc<AtomicBool>, command: &str, r
         match value.get("type").and_then(|v| v.as_str()) {
             Some("progress") => {
                 if let Some(event) = value.get("event") {
-                    let _ = app.emit("recap-progress", event);
+                    let _ = app.emit(progress_event, event);
                 }
             }
             Some("result") => {
@@ -503,6 +526,8 @@ pub fn run() {
             delete_history_item,
             export_summary,
             save_summary,
+            check_model,
+            pull_model,
             read_text,
             run_recap,
             resummarize,

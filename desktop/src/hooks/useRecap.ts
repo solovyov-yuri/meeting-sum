@@ -5,6 +5,7 @@ import type {
   ExportFormat,
   HistoryItem,
   ProgressEvent,
+  PullModelRequest,
   RunMode,
   RunRequest,
   RunResult,
@@ -12,6 +13,11 @@ import type {
   StepName,
   StepStatus,
 } from "@/lib/types";
+
+export interface ModelPull {
+  percent: number | null;
+  message: string;
+}
 import { dirName, fileName, stem } from "@/lib/utils";
 
 // "download" (one-time GPU libs fetch in the portable build) is shown only when a run emits it.
@@ -103,6 +109,11 @@ export function useRecap() {
 
   const [phase, setPhase] = useState<Phase>("idle");
   const [steps, setSteps] = useState(initialSteps());
+  // Ollama model-missing prompt (confirm-first) + in-progress pull. pendingAction is what runs once
+  // the model is confirmed downloaded (the start or the retry pipeline).
+  const [modelPrompt, setModelPrompt] = useState<PullModelRequest | null>(null);
+  const [modelPull, setModelPull] = useState<ModelPull | null>(null);
+  const pendingAction = useRef<(() => Promise<void>) | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [result, setResult] = useState<RunResult | null>(null);
   const [editedSummary, setEditedSummary] = useState("");
@@ -176,7 +187,7 @@ export function useRecap() {
     [pushLog],
   );
 
-  const start = useCallback(async () => {
+  const runPipeline = useCallback(async () => {
     if (!audioPath || !settings) return;
     setActiveHistoryId(null);
     setRunConfig(configFromSettings(settings));
@@ -239,7 +250,67 @@ export function useRecap() {
     await refreshHistory();
   }, [audioPath, settings, runMode, applyEvent, pushLog, refreshHistory]);
 
-  const retrySummarization = useCallback(async () => {
+  // Confirm-first pre-flight: for a summarization run on Ollama, if the model is missing, stash the
+  // pipeline as pendingAction and show the prompt instead of running. A failed check just proceeds —
+  // the run surfaces any real error (incl. "Ollama not reachable").
+  const ensureModel = useCallback(
+    async (action: () => Promise<void>) => {
+      if (settings?.summarization.model.provider === "ollama") {
+        try {
+          const st = await (await getBridge()).checkModel();
+          if (!st.installed && st.base_url) {
+            pendingAction.current = action;
+            setModelPrompt({ model: st.model, base_url: st.base_url });
+            return;
+          }
+        } catch {
+          /* check unavailable → run anyway */
+        }
+      }
+      await action();
+    },
+    [settings],
+  );
+
+  const start = useCallback(async () => {
+    if (!audioPath || !settings) return;
+    const usesSummary = runMode === "full" || runMode === "summarize";
+    await (usesSummary ? ensureModel(runPipeline) : runPipeline());
+  }, [audioPath, settings, runMode, ensureModel, runPipeline]);
+
+  const confirmModelDownload = useCallback(async () => {
+    if (!modelPrompt) return;
+    setModelPull({ percent: null, message: `Загрузка ${modelPrompt.model}…` });
+    try {
+      const res = await (await getBridge()).pullModel(modelPrompt, (e) =>
+        setModelPull({ percent: e.percent, message: e.message }),
+      );
+      setModelPull(null);
+      if (res.status === "success") {
+        setModelPrompt(null);
+        const action = pendingAction.current;
+        pendingAction.current = null;
+        await action?.();
+      }
+      // cancelled/failed → keep the dialog so the user can retry or dismiss
+    } catch (e) {
+      setModelPull(null);
+      pushLog("error", e instanceof Error ? e.message : String(e));
+    }
+  }, [modelPrompt, pushLog]);
+
+  // Cancel the in-progress pull (reuses the run cancel flag). Ollama keeps pulling server-side.
+  const cancelModelDownload = useCallback(async () => {
+    await (await getBridge()).cancelRun();
+  }, []);
+
+  const dismissModelPrompt = useCallback(() => {
+    setModelPrompt(null);
+    setModelPull(null);
+    pendingAction.current = null;
+  }, []);
+
+  const retryPipeline = useCallback(async () => {
     // Re-run summarization ONLY, reusing the transcript already on disk. Never
     // re-transcribe (that would re-process the whole meeting). Uses the *current* saved
     // settings, so fixing the model/provider in Settings and retrying actually takes effect.
@@ -274,6 +345,10 @@ export function useRecap() {
     }
     await refreshHistory();
   }, [audioPath, settings, result, applyEvent, pushLog, refreshHistory]);
+
+  // Retry goes through the same model pre-check — a partial-fail caused by a missing model then
+  // Retry would otherwise hit the same wall.
+  const retrySummarization = useCallback(() => ensureModel(retryPipeline), [ensureModel, retryPipeline]);
 
   const newRun = useCallback(() => {
     setActiveHistoryId(null);
@@ -396,6 +471,11 @@ export function useRecap() {
     saveSummary,
     openHistoryItem,
     removeHistoryItem,
+    modelPrompt,
+    modelPull,
+    confirmModelDownload,
+    cancelModelDownload,
+    dismissModelPrompt,
   };
 }
 
