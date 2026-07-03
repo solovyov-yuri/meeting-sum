@@ -1,6 +1,5 @@
 import { ChevronDown, FileText, FolderOpen, History, Plus, Settings as SettingsIcon, Trash2 } from "lucide-react";
 import { useState } from "react";
-import iconUrl from "@/assets/recap-icon.png";
 import { Button } from "@/components/ui/button";
 import type { HistoryItem } from "@/lib/types";
 import { cn, fileName, formatWhen } from "@/lib/utils";
@@ -34,12 +33,7 @@ export function Sidebar({
   const [recentOpen, setRecentOpen] = useState(true);
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-panel">
-      <div className="flex h-14 items-center gap-2.5 px-3.5 text-[15px] font-semibold">
-        <img src={iconUrl} alt="Recap" className="h-7 w-7 rounded-md" />
-        <span>Recap</span>
-      </div>
-
-      <div className="px-3.5 pb-2.5">
+      <div className="px-3.5 pb-2.5 pt-3.5">
         <Button variant="primary" size="lg" className="w-full" onClick={onNewRun}>
           <Plus className="h-4 w-4" /> Новый разбор
         </Button>
