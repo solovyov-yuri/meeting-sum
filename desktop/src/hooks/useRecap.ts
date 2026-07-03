@@ -159,7 +159,10 @@ export function useRecap() {
         ...prev,
         [event.step]: { status: event.status, percent: event.percent },
       }));
-      pushLog(event.status, event.message);
+      // Per-segment percent ticks drive the step ring only — logging each «Транскрибация… N%»
+      // would flood the log tab with hundreds of near-identical lines. Terminal events
+      // (success/warning/error) are always logged, even when they carry a percent.
+      if (event.status !== "running" || event.percent === null) pushLog(event.status, event.message);
     },
     [pushLog],
   );
