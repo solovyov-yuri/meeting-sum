@@ -101,41 +101,29 @@ def test_transcribe_params(fake_faster_whisper: dict) -> None:
     assert result.segments[0].text == "hello"
 
 
-def test_probe_wav_duration(tmp_path: Path) -> None:
-    import wave
+def test_transcribe_on_progress_stdout_not_swallowed_by_rich(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The bridge's on_progress writes NDJSON to sys.stdout from inside the segment loop.
 
-    from providers.whisper import _probe_wav_duration
+    Rich's Progress defaults to redirect_stdout=True, which reroutes those writes into its
+    (stderr) console — the desktop app then never receives per-segment progress lines. This
+    pins stdout staying untouched while the progress bar is live.
 
-    p = tmp_path / "a.wav"
-    with wave.open(str(p), "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(16000)
-        w.writeframes(b"\x00\x00" * 3200)  # 0.2s
+    Rich only redirects when it believes the console is a terminal — which is exactly the
+    desktop-worker case on Windows (stderr → NUL reports isatty()=True), so force it here.
+    """
+    import io
 
-    assert abs(_probe_wav_duration(p) - 0.2) < 1e-6
-    assert _probe_wav_duration(tmp_path / "missing.wav") == 0.0
-
-
-def test_transcribe_progress_uses_wav_probe_when_info_duration_zero(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    import wave
+    import rich.console
 
     from providers.whisper import WhisperTranscriber
 
-    wav = tmp_path / "audio.wav"  # 2-second WAV → a segment ending at 1.0s is 50% via the probe
-    with wave.open(str(wav), "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(16000)
-        w.writeframes(b"\x00\x00" * 32000)
+    monkeypatch.setattr(rich.console.Console, "is_terminal", property(lambda self: True))
 
     class FakeInfo:
-        duration = 0.0  # the bug: faster-whisper reports no duration
+        duration = 10.0
 
     class FakeSegment:
-        start, end, text = 0.0, 1.0, " hi "
+        start, end, text = 0.0, 5.0, " hi "
 
     class FakeModel:
         def __init__(self, *a: object, **k: object) -> None: ...
@@ -147,7 +135,10 @@ def test_transcribe_progress_uses_wav_probe_when_info_duration_zero(
     fake_fw.WhisperModel = FakeModel
     monkeypatch.setitem(sys.modules, "faster_whisper", fake_fw)
 
+    out = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+
     tr = WhisperTranscriber(model_name="small", device="cpu")
-    pcts: list[float] = []
-    tr.transcribe(wav, "ru", on_progress=pcts.append)
-    assert pcts == [0.5]  # would be [] without the WAV-probe fallback
+    tr.transcribe(tmp_path / "audio.wav", "ru", on_progress=lambda p: sys.stdout.write(f"pct={p}\n"))
+
+    assert out.getvalue() == "pct=0.5\n"  # empty if Rich redirected stdout into its console

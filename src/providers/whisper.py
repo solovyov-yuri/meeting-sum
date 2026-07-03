@@ -12,25 +12,6 @@ from transcript import Segment, Transcript
 logger = logging.getLogger(__name__)
 
 
-def _probe_wav_duration(path: Path) -> float:
-    """Best-effort duration (seconds) of a PCM WAV via the stdlib — 0.0 if unreadable.
-
-    faster-whisper sometimes reports ``info.duration == 0`` (seen with audio extracted from video),
-    which silently disables transcription progress. The prepared audio is a PCM WAV, so this gives a
-    reliable fallback denominator. Non-WAV inputs (e.g. transcribe-only with preprocessing off) just
-    return 0.0 and we fall back to ``info.duration``.
-    """
-    import contextlib  # noqa: PLC0415
-    import wave  # noqa: PLC0415
-
-    try:
-        with contextlib.closing(wave.open(str(path), "rb")) as wf:
-            rate = wf.getframerate()
-            return wf.getnframes() / rate if rate else 0.0
-    except Exception:  # noqa: BLE001 - diagnostics helper, never fail the run
-        return 0.0
-
-
 def _set_cuda_paths() -> None:
     """Pre-load venv NVIDIA libs so ctranslate2's lazy dlopen calls find them."""
     project_root = Path(__file__).resolve().parents[2]
@@ -123,12 +104,14 @@ class WhisperTranscriber:
             TaskProgressColumn(),
             TimeElapsedColumn(),
             console=Console(stderr=True),
+            # The desktop bridge's on_progress callback writes NDJSON to sys.stdout; Rich's default
+            # redirect_stdout=True would swallow those lines into the stderr console, so the app
+            # never sees per-segment progress. stdout must stay untouched here.
+            redirect_stdout=False,
         ) as progress:
-            # faster-whisper's info.duration is 0 for some inputs (video→WAV); probe the WAV as a
-            # fallback so per-segment progress still fires.
-            duration = info.duration or _probe_wav_duration(audio)
+            duration = info.duration
             if on_progress is not None and not duration:
-                logger.warning("No audio duration (Whisper info + WAV probe) — transcription progress %% unavailable.")
+                logger.warning("Whisper reported no audio duration — transcription progress %% unavailable.")
             task = progress.add_task("Transcribing", total=duration or None)
             segments = []
             for s in segments_iter:
