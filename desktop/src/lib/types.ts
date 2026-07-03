@@ -154,3 +154,8 @@ export interface SaveSummaryResult {
   summary_path: string;
   json_path: string;
 }
+
+export interface CudaStatus {
+  installed: boolean;
+  dir: string;
+}

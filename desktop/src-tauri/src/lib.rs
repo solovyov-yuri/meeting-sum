@@ -193,6 +193,21 @@ async fn save_summary(app: AppHandle, req: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
+async fn cuda_status(app: AppHandle) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || run_bridge(&app, "cuda_status", json!({})))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+// Long-running (~1.7 GB download); the one-shot bridge call blocks until it finishes.
+#[tauri::command]
+async fn download_cuda(app: AppHandle) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || run_bridge(&app, "download_cuda", json!({})))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn read_text(app: AppHandle, path: Option<String>) -> Result<Value, String> {
     let payload = json!({ "path": path });
     tauri::async_runtime::spawn_blocking(move || run_bridge(&app, "read_text", payload))
@@ -499,6 +514,8 @@ pub fn run() {
             delete_history_item,
             export_summary,
             save_summary,
+            cuda_status,
+            download_cuda,
             read_text,
             run_recap,
             resummarize,

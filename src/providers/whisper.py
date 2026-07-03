@@ -15,10 +15,12 @@ logger = logging.getLogger(__name__)
 def _set_cuda_paths() -> None:
     """Pre-load venv NVIDIA libs so ctranslate2's lazy dlopen calls find them."""
     if getattr(sys, "frozen", False):
-        # Portable (PyInstaller) build: CUDA libs are bundled under the app dir at
-        # nvidia/{cublas,cudnn}/bin (see packaging/recap-bridge.spec). Add them to PATH so
-        # ctranslate2's dlopen resolves them; the isdir guards make a CPU-only bundle harmless.
-        base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+        # Portable (PyInstaller) build: CUDA libs are NOT bundled (~1.9 GB). They are downloaded on
+        # demand into cuda_support.cuda_libs_dir(); add them to PATH so ctranslate2's dlopen resolves
+        # them. The isdir guards make a CPU-only run (libs not downloaded) harmless.
+        from cuda_support import cuda_libs_dir  # noqa: PLC0415
+
+        base = cuda_libs_dir()
         nvidia_dirs = [str(base / "nvidia" / "cublas" / "bin"), str(base / "nvidia" / "cudnn" / "bin")]
         existing = os.environ.get("PATH", "")
         os.environ["PATH"] = os.pathsep.join([d for d in nvidia_dirs if os.path.isdir(d)] + [existing])
@@ -71,6 +73,16 @@ class WhisperTranscriber:
         vad_filter: bool = True,
         condition_on_previous_text: bool = True,
     ) -> None:
+        # Portable build: GPU libs are downloaded on demand. Fail early with a clear message rather
+        # than a cryptic ctranslate2 dlopen error when the user picked CUDA without downloading them.
+        if getattr(sys, "frozen", False) and device == "cuda":
+            from cuda_support import is_cuda_installed  # noqa: PLC0415
+
+            if not is_cuda_installed():
+                raise RuntimeError(
+                    "Поддержка GPU не загружена. Скачайте её в «Настройки → Транскрибация» "
+                    "или выберите устройство CPU."
+                )
         _set_cuda_paths()
         from faster_whisper import WhisperModel  # noqa: PLC0415
         from rich.console import Console  # noqa: PLC0415

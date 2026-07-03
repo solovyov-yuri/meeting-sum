@@ -475,6 +475,21 @@ def export_summary(payload: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def cuda_status() -> dict[str, Any]:
+    """Report whether GPU (CUDA) support is available (portable build downloads it on demand)."""
+    import cuda_support  # noqa: PLC0415
+
+    return {"installed": cuda_support.is_cuda_installed(), "dir": str(cuda_support.cuda_libs_dir())}
+
+
+def download_cuda(payload: dict[str, Any]) -> dict[str, Any]:
+    """Download the CUDA runtime libs for GPU transcription (portable build). Blocks until done."""
+    import cuda_support  # noqa: PLC0415
+
+    cuda_support.download_cuda_libs()
+    return {"installed": cuda_support.is_cuda_installed(), "dir": str(cuda_support.cuda_libs_dir())}
+
+
 def save_summary(payload: dict[str, Any]) -> dict[str, Any]:
     """Persist the edited summary: overwrite the canonical Markdown ``.txt`` and re-derive the
     structured ``.json`` from it (parse Markdown → object → JSON). Mirrors what a run writes, so
@@ -777,6 +792,10 @@ def main(argv: list[str] | None = None) -> int:
             out = export_summary(payload)
         elif command == "save_summary":
             out = save_summary(payload)
+        elif command == "cuda_status":
+            out = cuda_status()
+        elif command == "download_cuda":
+            out = download_cuda(payload)
         elif command == "get_history":
             out = get_history()
         elif command == "read_text":

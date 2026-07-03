@@ -11,7 +11,6 @@
 # <bundle>/nvidia/*/bin. If GPU transcription fails in the portable build, verify those folders made
 # it into dist/recap-bridge/_internal/nvidia/*/bin.
 
-import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
@@ -19,23 +18,14 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 ROOT = Path(SPECPATH).resolve().parent  # packaging/ -> repo root
 SRC = ROOT / "src"
 
-# Resolve the active venv's site-packages to pick up the NVIDIA CUDA DLLs.
-if sys.platform == "win32":
-    _site = Path(sys.prefix) / "Lib" / "site-packages"
-else:
-    _site = Path(sys.prefix) / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
-
-# Bundle the CUDA runtime dirs verbatim so the frozen _set_cuda_paths() can add them to PATH.
-cuda_datas = []
-for pkg in ("cublas", "cudnn"):
-    for sub in ("bin", "lib"):
-        d = _site / "nvidia" / pkg / sub
-        if d.is_dir():
-            cuda_datas.append((str(d), f"nvidia/{pkg}/{sub}"))
-
-datas = list(cuda_datas)
+# NVIDIA CUDA libs (~1.9 GB) are intentionally NOT bundled — the portable build downloads them on
+# demand (src/cuda_support.py; providers.whisper._set_cuda_paths frozen branch adds them to PATH).
+# PyInstaller won't pull them in on its own since nothing imports `nvidia`. Keep it that way to keep
+# the base bundle ~400 MB; ctranslate2 still runs on CPU without them.
+datas = []
 binaries = []
 hiddenimports = [
+    "cuda_support",  # imported lazily inside whisper._set_cuda_paths / the bridge
     # keyring picks its backend at runtime; PyInstaller can't see it statically.
     "keyring.backends.Windows",
     "keyring.backends.SecretService",

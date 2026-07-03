@@ -4,6 +4,7 @@
 
 import type {
   AppSettings,
+  CudaStatus,
   ExportRequest,
   ExportResult,
   HistoryItem,
@@ -32,6 +33,8 @@ export interface Bridge {
   readText(path: string | null): Promise<{ text: string | null; exists: boolean }>;
   exportSummary(req: ExportRequest): Promise<ExportResult>;
   saveSummary(req: SaveSummaryRequest): Promise<SaveSummaryResult>;
+  cudaStatus(): Promise<CudaStatus>;
+  downloadCuda(): Promise<CudaStatus>;
   runRecap(req: RunRequest, onProgress: ProgressHandler): Promise<RunResult>;
   resummarize(req: RunRequest, onProgress: ProgressHandler): Promise<RunResult>;
   cancelRun(): Promise<void>;
@@ -61,6 +64,8 @@ async function tauriBridge(): Promise<Bridge> {
     readText: (path) => invoke<{ text: string | null; exists: boolean }>("read_text", { path }),
     exportSummary: (req) => invoke<ExportResult>("export_summary", { req }),
     saveSummary: (req) => invoke<SaveSummaryResult>("save_summary", { req }),
+    cudaStatus: () => invoke<CudaStatus>("cuda_status"),
+    downloadCuda: () => invoke<CudaStatus>("download_cuda"),
     cancelRun: () => invoke("cancel_run"),
     async runRecap(req, onProgress) {
       const unlisten = await listen<ProgressEvent>("recap-progress", (e) => onProgress(e.payload));
@@ -183,6 +188,7 @@ function browserBridge(): Bridge {
   let history: HistoryItem[] = [];
   const files: Record<string, string> = {};
   let cancelled = false;
+  let mockCudaInstalled = false;
 
   const pushHistory = (req: RunRequest, result: RunResult, provider: string, name: string) => {
     history = [
@@ -266,6 +272,15 @@ function browserBridge(): Bridge {
       files[req.summary_path] = req.summary_text;
       files[jsonPath] = JSON.stringify({ mode: req.mode, edited: true });
       return { summary_path: req.summary_path, json_path: jsonPath };
+    },
+    async cudaStatus() {
+      await delay(60);
+      return { installed: mockCudaInstalled, dir: "C:/recap/cuda" };
+    },
+    async downloadCuda() {
+      await delay(400);
+      mockCudaInstalled = true;
+      return { installed: true, dir: "C:/recap/cuda" };
     },
     async cancelRun() {
       cancelled = true;

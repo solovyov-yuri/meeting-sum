@@ -11,10 +11,13 @@ dist/portable/Recap/
 ├── Recap.exe            # the Tauri app
 ├── recap-bridge/        # frozen Python sidecar (PyInstaller one-dir)
 │   ├── recap-bridge.exe
-│   └── _internal/       # Python runtime + deps + CUDA libs (nvidia/*/bin)
+│   └── _internal/       # Python runtime + deps (NO CUDA — ~400 MB)
 └── WebView2Loader.dll   # if produced by the build
 ```
 …plus `dist/portable/Recap-<version>-portable.zip`.
+
+The base folder is **~400 MB**: the NVIDIA CUDA runtime (~1.9 GB) is **not** bundled — CPU
+transcription works out of the box, and GPU support is downloaded on demand from the app (see below).
 
 The app locates the sidecar automatically: `desktop/src-tauri/src/lib.rs` (`bundled_bridge_path`)
 looks for `recap-bridge/recap-bridge.exe` **next to `Recap.exe`**. No environment variables are
@@ -38,15 +41,20 @@ The script: `uv sync` → PyInstaller freeze (`packaging/recap-bridge.spec`) →
 - `-SkipDeps` — skip `uv sync`.
 - `-Ffmpeg <path>` — copy an `ffmpeg.exe` into the folder (see below).
 
-## Caveats
+## GPU support (downloaded on demand)
 
-- **Size.** The CUDA runtime wheels (`nvidia-cublas-cu12`, `nvidia-cudnn-cu12`) are large; expect the
-  folder to be **~2–4 GB**. There is no way around this for GPU transcription.
-- **CUDA is the fragile part.** The spec copies `…/site-packages/nvidia/{cublas,cudnn}/bin` into the
-  bundle, and `providers.whisper._set_cuda_paths()` has a `frozen` branch that adds
-  `<bundle>/nvidia/*/bin` to `PATH`. If GPU transcription fails in the portable build, confirm those
-  DLLs actually landed in `recap-bridge/_internal/nvidia/*/bin`. A machine with no NVIDIA GPU falls
-  back to CPU (set the transcription device to `cpu`/`auto` in Settings).
+To keep the download small, the portable build ships CPU-only. GPU (CUDA) support is fetched once,
+on demand:
+
+- **Settings → Транскрибация** shows a *«Скачать поддержку GPU (~1.7 ГБ)»* button when CUDA isn't
+  present. It downloads the pinned `nvidia-cublas-cu12` + `nvidia-cudnn-cu12` wheels from PyPI
+  (`src/cuda_support.py`) and extracts their DLLs into `<app data>/cuda/nvidia/*/bin`.
+- `providers.whisper._set_cuda_paths()` (frozen branch) adds that dir to `PATH` so ctranslate2 finds
+  the libs. Picking device `cuda` before downloading yields a clear error, not a cryptic dlopen fail.
+- The pinned versions in `cuda_support.CUDA_PACKAGES` must match `pyproject.toml` (the DLL SONAMEs
+  must match ctranslate2). Bump them together.
+
+## Caveats
 - **ffmpeg.** Full-mode preprocessing shells out to `ffmpeg`. The portable build does **not** bundle
   it by default — either have `ffmpeg` on `PATH`, or pass `-Ffmpeg <path>` and add the portable
   folder to `PATH`. Transcription-only runs don't need ffmpeg.
@@ -57,8 +65,9 @@ The script: `uv sync` → PyInstaller freeze (`packaging/recap-bridge.spec`) →
 
 ## Verification status
 
-The build tooling here (spec, script, `bundled_bridge_path`, the frozen `_set_cuda_paths` branch) was
-authored and compile-checked but **not run end-to-end** — freezing faster-whisper + CUDA with
-PyInstaller is Windows/GPU-specific and typically needs a round or two of hidden-import / CUDA-path
-tuning on the actual build machine. Treat the first `build-portable.ps1` run as the real integration
-test.
+The deterministic parts are tested here (`cuda_support` dir/marker/extract logic; the Rust and Python
+plumbing compiles and passes 338 tests + lint + types). But the parts that only exist at runtime on
+Windows are **unverified from this environment**: the PyInstaller freeze (hidden imports may need
+tuning), the actual GPU CUDA download + dlopen, and the packaged exe launching the bundled bridge.
+Treat the first `build-portable.ps1` run — and the first GPU download from Settings — as the real
+integration tests.

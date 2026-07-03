@@ -5,7 +5,7 @@ import { Input, Label, Segmented, Select, Switch } from "@/components/ui/control
 import { useToast } from "@/components/ui/toast";
 import { getBridge } from "@/lib/bridge";
 import { isExternalProvider, PROVIDER_BASE_URLS } from "@/lib/providers";
-import type { AppSettings, ChunkingMode, ComputeType, SummaryMode, SummaryProvider, WhisperDevice } from "@/lib/types";
+import type { AppSettings, ChunkingMode, ComputeType, CudaStatus, SummaryMode, SummaryProvider, WhisperDevice } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type SectionId = "transcription" | "summarization" | "preprocessing" | "general";
@@ -334,6 +334,64 @@ function TranscriptionSection({ draft, update }: { draft: AppSettings; update: U
           />
         </Field>
       </FormGrid>
+      <GpuSupport />
+    </div>
+  );
+}
+
+// Portable build only: CUDA libs are downloaded on demand. Hidden when GPU support is already
+// present (dev/installer builds always report installed).
+function GpuSupport() {
+  const { toast } = useToast();
+  const [status, setStatus] = useState<CudaStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const s = await (await getBridge()).cudaStatus();
+        if (alive) setStatus(s);
+      } catch {
+        /* status unavailable → hide the block */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  if (!status || status.installed) return null;
+
+  const download = async () => {
+    setBusy(true);
+    try {
+      const s = await (await getBridge()).downloadCuda();
+      setStatus(s);
+      toast(s.installed ? "Поддержка GPU установлена" : "Не удалось установить поддержку GPU", s.installed ? "ok" : "error");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Ошибка загрузки поддержки GPU", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 rounded-card border border-border bg-panel-soft p-3.5">
+      <p className="text-base font-semibold text-ink">Поддержка GPU (CUDA)</p>
+      <p className="mt-1 text-sm text-ink-muted">
+        Для распознавания на видеокарте нужно один раз скачать библиотеки CUDA (~1.7 ГБ). Без них
+        доступен только режим CPU.
+      </p>
+      <Button variant="primary" size="lg" className="mt-2.5" onClick={download} disabled={busy}>
+        {busy ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin" /> Загрузка… это займёт несколько минут
+          </>
+        ) : (
+          "Скачать поддержку GPU (~1.7 ГБ)"
+        )}
+      </Button>
     </div>
   );
 }
