@@ -14,6 +14,16 @@ logger = logging.getLogger(__name__)
 
 def _set_cuda_paths() -> None:
     """Pre-load venv NVIDIA libs so ctranslate2's lazy dlopen calls find them."""
+    if getattr(sys, "frozen", False):
+        # Portable (PyInstaller) build: CUDA libs are bundled under the app dir at
+        # nvidia/{cublas,cudnn}/bin (see packaging/recap-bridge.spec). Add them to PATH so
+        # ctranslate2's dlopen resolves them; the isdir guards make a CPU-only bundle harmless.
+        base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+        nvidia_dirs = [str(base / "nvidia" / "cublas" / "bin"), str(base / "nvidia" / "cudnn" / "bin")]
+        existing = os.environ.get("PATH", "")
+        os.environ["PATH"] = os.pathsep.join([d for d in nvidia_dirs if os.path.isdir(d)] + [existing])
+        return
+
     project_root = Path(__file__).resolve().parents[2]
     if sys.platform == "win32":
         logger.info("windows detected, adding NVIDIA libs to PATH")

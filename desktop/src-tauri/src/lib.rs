@@ -39,6 +39,15 @@ struct RunState {
     worker: Arc<Mutex<Option<Worker>>>,
 }
 
+/// Locate a frozen `recap-bridge` shipped beside the app executable (portable layout:
+/// `<exe dir>/recap-bridge/recap-bridge[.exe]`). Returns None in dev, so the Python fallback runs.
+fn bundled_bridge_path() -> Option<PathBuf> {
+    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    let name = if cfg!(windows) { "recap-bridge.exe" } else { "recap-bridge" };
+    let candidate = dir.join("recap-bridge").join(name);
+    candidate.is_file().then_some(candidate)
+}
+
 fn bridge_command(app: &AppHandle) -> Result<Command, String> {
     let data_dir = app
         .path()
@@ -48,6 +57,10 @@ fn bridge_command(app: &AppHandle) -> Result<Command, String> {
 
     let mut cmd = if let Ok(bin) = std::env::var("RECAP_BRIDGE_BIN") {
         Command::new(bin)
+    } else if let Some(bundled) = bundled_bridge_path() {
+        // Portable build: a frozen `recap-bridge` ships next to the app executable, so the app
+        // needs no Python install and no env vars (see docs/portable-build.md).
+        Command::new(bundled)
     } else {
         let python = std::env::var("RECAP_PYTHON").unwrap_or_else(|_| "python".to_string());
         let mut c = Command::new(python);
