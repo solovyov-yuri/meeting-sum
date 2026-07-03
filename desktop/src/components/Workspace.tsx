@@ -78,7 +78,13 @@ export function Workspace(props: WorkspaceProps) {
     <main className="flex flex-1 flex-col gap-3 overflow-hidden p-4">
       <ModeBar runMode={props.runMode} setRunMode={props.setRunMode} disabled={phase === "running"} />
       <FileHeader {...props} />
-      {showSteps && <ProgressSteps steps={steps} order={visibleSteps(props.runMode)} />}
+      {showSteps && (
+        <ProgressSteps
+          steps={steps}
+          // Prepend the one-time GPU-download step only when a run actually emits it.
+          order={steps.download.status === "pending" ? visibleSteps(props.runMode) : ["download", ...visibleSteps(props.runMode)]}
+        />
+      )}
       {phase === "done" && result && <ResultBanner result={result} onRetry={props.onRetry} onSwitchTranscript={() => setTab("transcript")} />}
 
       <div className="flex min-h-0 flex-1 flex-col rounded-card border border-border bg-panel">

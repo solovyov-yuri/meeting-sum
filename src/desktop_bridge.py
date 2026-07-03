@@ -39,6 +39,22 @@ logger = logging.getLogger(__name__)
 # ── Desktop state locations ──────────────────────────────────────────────────────
 
 
+def _force_utf8_io() -> None:
+    """Make stdout/stderr UTF-8 regardless of the OS locale.
+
+    Belt-and-suspenders alongside the Rust shell's ``PYTHONUTF8=1``: on Windows a piped stdout/stderr
+    otherwise defaults to cp1252, and writing Cyrillic/CJK (the JSON result, streamed LLM tokens)
+    crashes with "'charmap' codec can't encode". Covers direct/CLI invocation where the env is unset.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8")
+            except (ValueError, OSError):  # pragma: no cover - stream not reconfigurable
+                pass
+
+
 def _data_dir() -> Path:
     env = os.environ.get("RECAP_DESKTOP_DATA_DIR")
     if env:
@@ -475,21 +491,6 @@ def export_summary(payload: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def cuda_status() -> dict[str, Any]:
-    """Report whether GPU (CUDA) support is available (portable build downloads it on demand)."""
-    import cuda_support  # noqa: PLC0415
-
-    return {"installed": cuda_support.is_cuda_installed(), "dir": str(cuda_support.cuda_libs_dir())}
-
-
-def download_cuda(payload: dict[str, Any]) -> dict[str, Any]:
-    """Download the CUDA runtime libs for GPU transcription (portable build). Blocks until done."""
-    import cuda_support  # noqa: PLC0415
-
-    cuda_support.download_cuda_libs()
-    return {"installed": cuda_support.is_cuda_installed(), "dir": str(cuda_support.cuda_libs_dir())}
-
-
 def save_summary(payload: dict[str, Any]) -> dict[str, Any]:
     """Persist the edited summary: overwrite the canonical Markdown ``.txt`` and re-derive the
     structured ``.json`` from it (parse Markdown → object → JSON). Mirrors what a run writes, so
@@ -718,6 +719,7 @@ def serve(lines: Iterable[str] | None = None) -> int:
     At most one transcriber is cached; a change to the transcription model drops the old one
     (freeing GPU memory) before building the new.
     """
+    _force_utf8_io()
     _configure_logging()
     cache: dict[tuple[Any, ...], WhisperTranscriber] = {}
 
@@ -755,6 +757,7 @@ def serve(lines: Iterable[str] | None = None) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _force_utf8_io()
     _configure_logging()
     args = sys.argv[1:] if argv is None else argv
     if not args:
@@ -792,10 +795,6 @@ def main(argv: list[str] | None = None) -> int:
             out = export_summary(payload)
         elif command == "save_summary":
             out = save_summary(payload)
-        elif command == "cuda_status":
-            out = cuda_status()
-        elif command == "download_cuda":
-            out = download_cuda(payload)
         elif command == "get_history":
             out = get_history()
         elif command == "read_text":

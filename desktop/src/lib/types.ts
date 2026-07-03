@@ -66,7 +66,7 @@ export interface AppSettings {
   preprocessing: PreprocessingSettings;
 }
 
-export type StepName = "preprocess" | "transcribe" | "summarize" | "export";
+export type StepName = "download" | "preprocess" | "transcribe" | "summarize" | "export";
 export type StepStatus = "pending" | "running" | "success" | "warning" | "error" | "cancelled";
 
 export interface ProgressEvent {
@@ -153,9 +153,4 @@ export interface SaveSummaryRequest {
 export interface SaveSummaryResult {
   summary_path: string;
   json_path: string;
-}
-
-export interface CudaStatus {
-  installed: boolean;
-  dir: string;
 }

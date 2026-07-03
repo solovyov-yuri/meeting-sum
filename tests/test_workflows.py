@@ -258,6 +258,59 @@ def test_run_one_file_structured_json_path(tmp_path: Path, audio_file: Path, mon
     assert data["blocks"][1]["groups"][1]["items"] == ["сделать"]
 
 
+def test_run_one_file_downloads_cuda_when_frozen(tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Portable build (frozen) + device=cuda + libs missing → a `download` step runs, then the run
+    # proceeds. Gated on sys.frozen, so only this test exercises _ensure_cuda's wiring.
+    import sys as _sys
+
+    import cuda_support
+
+    monkeypatch.setattr(_sys, "frozen", True, raising=False)
+    monkeypatch.setattr(cuda_support, "is_cuda_installed", lambda: False)
+    called = {"download": False}
+
+    def fake_download(on_progress=None, cancel=None):  # type: ignore[no-untyped-def]
+        called["download"] = True
+        if on_progress:
+            on_progress(50, 100, "Загрузка…")
+        return tmp_path
+
+    monkeypatch.setattr(cuda_support, "download_cuda_libs", fake_download)
+    _patch_providers(monkeypatch, Transcript(segments=(Segment(0.0, 1.0, "речь"),)), FakeSummarizer("резюме"))
+
+    events: list[ProgressEvent] = []
+    options = RunOptions(
+        audio_path=audio_file, transcript_path=tmp_path / "tr.txt", summary_path=tmp_path / "sum.txt", provider="ollama"
+    )
+    result = run_one_file(options, settings=Settings(), progress=events.append)
+
+    assert called["download"]  # Settings() defaults device=cuda, so the download step fired
+    assert result.status == "success"
+    assert any(e.step == "download" for e in events)
+
+
+def test_run_one_file_cuda_download_cancelled(tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys as _sys
+
+    import cuda_support
+
+    monkeypatch.setattr(_sys, "frozen", True, raising=False)
+    monkeypatch.setattr(cuda_support, "is_cuda_installed", lambda: False)
+
+    def cancel_download(on_progress=None, cancel=None):  # type: ignore[no-untyped-def]
+        raise cuda_support.DownloadCancelled
+
+    monkeypatch.setattr(cuda_support, "download_cuda_libs", cancel_download)
+    _patch_providers(monkeypatch, Transcript(segments=(Segment(0.0, 1.0, "x"),)), FakeSummarizer())
+
+    options = RunOptions(
+        audio_path=audio_file, transcript_path=tmp_path / "tr.txt", summary_path=tmp_path / "sum.txt", provider="ollama"
+    )
+    result = run_one_file(options, settings=Settings(), progress=lambda e: None)
+    assert result.status == "cancelled"
+    assert not (tmp_path / "tr.txt").exists()  # aborted before transcription
+
+
 def test_run_one_file_emits_transcribe_percent(
     tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

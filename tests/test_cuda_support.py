@@ -41,6 +41,20 @@ def test_is_cuda_installed_requires_completion_sentinel(monkeypatch: pytest.Monk
     assert cuda_support.is_cuda_installed() is False
 
 
+def test_download_cancels_before_network(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # An immediate cancel raises DownloadCancelled and never resolves/hits the network; no sentinel.
+    monkeypatch.setenv("RECAP_CUDA_DIR", str(tmp_path))
+    monkeypatch.setattr(cuda_support.sys, "frozen", True, raising=False)
+
+    def boom(*a: object, **k: object) -> object:
+        raise AssertionError("network must not be touched after cancel")
+
+    monkeypatch.setattr(cuda_support, "_resolve_win_wheel", boom)
+    with pytest.raises(cuda_support.DownloadCancelled):
+        cuda_support.download_cuda_libs(cancel=lambda: True)
+    assert cuda_support.is_cuda_installed() is False
+
+
 def test_extract_dlls_only_takes_bin_dlls(tmp_path: Path) -> None:
     # A wheel-like zip with a bin DLL, an unrelated file, and dist-info — only the DLL is extracted.
     buf = io.BytesIO()

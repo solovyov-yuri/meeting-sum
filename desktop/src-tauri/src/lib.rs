@@ -71,6 +71,10 @@ fn bridge_command(app: &AppHandle) -> Result<Command, String> {
         c
     };
     cmd.env("RECAP_DESKTOP_DATA_DIR", data_dir);
+    // Force UTF-8 for the bridge's stdio: on Windows a piped/redirected stdout/stderr defaults to
+    // the cp1252 ("charmap") codec, so writing Cyrillic/CJK (JSON results, streamed LLM tokens)
+    // raises "'charmap' codec can't encode". PYTHONUTF8=1 makes all Python I/O UTF-8.
+    cmd.env("PYTHONUTF8", "1");
 
     // REL-003: this is a GUI app (windows_subsystem = "windows"); without CREATE_NO_WINDOW,
     // Windows opens a visible console for every bridge spawn (settings, history, each run…).
@@ -188,21 +192,6 @@ async fn export_summary(app: AppHandle, req: Value) -> Result<Value, String> {
 #[tauri::command]
 async fn save_summary(app: AppHandle, req: Value) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || run_bridge(&app, "save_summary", req))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-async fn cuda_status(app: AppHandle) -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || run_bridge(&app, "cuda_status", json!({})))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-// Long-running (~1.7 GB download); the one-shot bridge call blocks until it finishes.
-#[tauri::command]
-async fn download_cuda(app: AppHandle) -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || run_bridge(&app, "download_cuda", json!({})))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -514,8 +503,6 @@ pub fn run() {
             delete_history_item,
             export_summary,
             save_summary,
-            cuda_status,
-            download_cuda,
             read_text,
             run_recap,
             resummarize,

@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { STEP_ORDER, type StepState } from "@/hooks/useRecap";
 
 const STEP_LABELS: Record<StepName, string> = {
+  download: "Загрузка GPU",
   preprocess: "Подготовка",
   transcribe: "Транскрибация",
   summarize: "Суммаризация",

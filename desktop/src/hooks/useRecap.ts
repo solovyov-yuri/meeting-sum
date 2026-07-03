@@ -14,7 +14,8 @@ import type {
 } from "@/lib/types";
 import { dirName, fileName, stem } from "@/lib/utils";
 
-export const STEP_ORDER: StepName[] = ["preprocess", "transcribe", "summarize", "export"];
+// "download" (one-time GPU libs fetch in the portable build) is shown only when a run emits it.
+export const STEP_ORDER: StepName[] = ["download", "preprocess", "transcribe", "summarize", "export"];
 
 // Filesystem-safe local timestamp (no ":") for the per-run output folder, e.g. 2026-07-03_14-30-05.
 function runStamp(): string {
@@ -63,6 +64,7 @@ export type Phase = "idle" | "running" | "done";
 
 function initialSteps(): Record<StepName, StepState> {
   return {
+    download: { status: "pending", percent: null },
     preprocess: { status: "pending", percent: null },
     transcribe: { status: "pending", percent: null },
     summarize: { status: "pending", percent: null },
@@ -77,7 +79,7 @@ function nowTime(): string {
 function stepsForStatus(status: RunStatus): Record<StepName, StepState> {
   const s = initialSteps();
   if (status === "success") {
-    return { preprocess: ok, transcribe: ok, summarize: ok, export: ok };
+    return { ...s, preprocess: ok, transcribe: ok, summarize: ok, export: ok };
   }
   if (status === "partial_success") {
     return { ...s, transcribe: ok, summarize: { status: "error", percent: null } };

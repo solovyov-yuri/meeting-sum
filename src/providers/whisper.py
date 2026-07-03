@@ -73,16 +73,8 @@ class WhisperTranscriber:
         vad_filter: bool = True,
         condition_on_previous_text: bool = True,
     ) -> None:
-        # Portable build: GPU libs are downloaded on demand. Fail early with a clear message rather
-        # than a cryptic ctranslate2 dlopen error when the user picked CUDA without downloading them.
-        if getattr(sys, "frozen", False) and device == "cuda":
-            from cuda_support import is_cuda_installed  # noqa: PLC0415
-
-            if not is_cuda_installed():
-                raise RuntimeError(
-                    "Поддержка GPU не загружена. Скачайте её в «Настройки → Транскрибация» "
-                    "или выберите устройство CPU."
-                )
+        # Portable build: GPU libs are downloaded on demand as a `download` step before this runs
+        # (workflows._ensure_cuda), so they're present by the time the model loads.
         _set_cuda_paths()
         from faster_whisper import WhisperModel  # noqa: PLC0415
         from rich.console import Console  # noqa: PLC0415

@@ -42,6 +42,7 @@ _LOCAL_HOSTNAMES = {"localhost", "127.0.0.1", "::1"}
 AUDIO_EXTENSIONS = frozenset({".wav", ".mp3", ".m4a", ".ogg", ".mp4", ".mkv", ".webm", ".flac"})
 
 # ── Steps / statuses (kept in sync with docs/desktop-bridge-contract.md) ─────────
+STEP_DOWNLOAD = "download"  # portable build: one-time GPU (CUDA) libs download before a cuda run
 STEP_PREPROCESS = "preprocess"
 STEP_TRANSCRIBE = "transcribe"
 STEP_SUMMARIZE = "summarize"
@@ -136,6 +137,44 @@ def _json_sibling(summary_path: Path) -> Path:
     return summary_path.with_name(f"{summary_path.stem}.json")
 
 
+def _ensure_cuda(
+    settings: Settings,
+    emit: ProgressCallback,
+    cancelled: CancelCheck,
+    failed: Callable[[str, str], RunResult],
+) -> RunResult | None:
+    """Portable build only: download the GPU (CUDA) libs once before a cuda transcription run.
+
+    Returns None to proceed; a cancelled/failed RunResult to abort. No-op on a dev/installer build
+    (CUDA ships in the venv) or when the device isn't ``cuda``. Progress streams as a ``download``
+    step and the run's cancel flag stops it mid-download.
+    """
+    import sys  # noqa: PLC0415
+
+    if not getattr(sys, "frozen", False) or settings.transcription.model.device != "cuda":
+        return None
+    from cuda_support import DownloadCancelled, download_cuda_libs, is_cuda_installed  # noqa: PLC0415
+
+    if is_cuda_installed():
+        return None
+
+    emit(ProgressEvent(STEP_DOWNLOAD, "running", "Загрузка библиотек GPU (CUDA)…", percent=None))
+
+    def on_progress(done: int, total: int, message: str) -> None:
+        emit(ProgressEvent(STEP_DOWNLOAD, "running", message, percent=(done / total if total else None)))
+
+    try:
+        download_cuda_libs(on_progress=on_progress, cancel=cancelled)
+    except DownloadCancelled:
+        emit(ProgressEvent(STEP_DOWNLOAD, "cancelled", "Загрузка GPU отменена."))
+        return RunResult("cancelled", None, None, None, None, None, "Загрузка GPU отменена.")
+    except Exception as exc:  # noqa: BLE001 - boundary: report as a failed step
+        logger.exception("CUDA download failed")
+        return failed(STEP_DOWNLOAD, f"Не удалось загрузить библиотеки GPU: {humanize_error(exc)}")
+    emit(ProgressEvent(STEP_DOWNLOAD, "success", "Библиотеки GPU загружены."))
+    return None
+
+
 def run_one_file(
     options: RunOptions,
     *,
@@ -208,6 +247,11 @@ def run_one_file(
 
     if cancelled():
         return RunResult("cancelled", None, None, None, None, None, "Остановлено пользователем.")
+
+    # ── Download GPU libs on demand (portable build), before loading the model ─────
+    gpu = _ensure_cuda(settings, emit, cancelled, failed)
+    if gpu is not None:
+        return gpu  # cancelled or download failed
 
     # ── Transcribe (preprocess inside) ────────────────────────────────────────────
     build_transcriber = transcriber_factory or make_transcriber

@@ -27,6 +27,11 @@ CUDA_PACKAGES: list[tuple[str, str]] = [
 ]
 
 ProgressCallback = Callable[[int, int, str], None]  # (done_bytes, total_bytes, message)
+CancelCheck = Callable[[], bool]  # returns True when the user requested cancellation
+
+
+class DownloadCancelled(Exception):
+    """Raised when an in-progress CUDA download is cancelled by the user."""
 
 
 def _sentinel() -> Path:
@@ -93,20 +98,29 @@ def _extract_dlls(whl_path: Path, dest: Path) -> int:
     return count
 
 
-def download_cuda_libs(on_progress: ProgressCallback | None = None) -> Path:
+def download_cuda_libs(on_progress: ProgressCallback | None = None, cancel: CancelCheck | None = None) -> Path:
     """Download the pinned cuBLAS+cuDNN wheels and extract their DLLs into ``cuda_libs_dir()``.
 
-    Reports byte progress across both wheels via ``on_progress``. Returns the cache dir.
+    Reports byte progress across both wheels via ``on_progress`` and polls ``cancel`` frequently;
+    on cancel it raises ``DownloadCancelled`` (the sentinel stays absent, so it re-offers). Returns
+    the cache dir on success.
     """
+
+    def check_cancel() -> None:
+        if cancel and cancel():
+            raise DownloadCancelled
+
     dest = cuda_libs_dir()
     dest.mkdir(parents=True, exist_ok=True)
     _sentinel().unlink(missing_ok=True)  # invalidate until this download fully completes
 
+    check_cancel()  # honour an immediate cancel before touching the network
     resolved = [(pkg, ver, *_resolve_win_wheel(pkg, ver)) for pkg, ver in CUDA_PACKAGES]
     total = sum(size for *_, size in resolved) or 0
     done = 0
 
     for pkg, ver, url, _size in resolved:
+        check_cancel()
         if on_progress:
             on_progress(done, total, f"Загрузка {pkg} {ver}…")
         with tempfile.NamedTemporaryFile(suffix=".whl", delete=False) as tmp:
@@ -114,6 +128,7 @@ def download_cuda_libs(on_progress: ProgressCallback | None = None) -> Path:
             try:
                 with urllib.request.urlopen(url, timeout=60) as resp:  # noqa: S310 - PyPI files host
                     while chunk := resp.read(1 << 20):
+                        check_cancel()
                         tmp.write(chunk)
                         done += len(chunk)
                         if on_progress:

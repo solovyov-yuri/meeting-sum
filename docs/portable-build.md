@@ -44,15 +44,19 @@ The script: `uv sync` → PyInstaller freeze (`packaging/recap-bridge.spec`) →
 ## GPU support (downloaded on demand)
 
 To keep the download small, the portable build ships CPU-only. GPU (CUDA) support is fetched once,
-on demand:
+automatically:
 
-- **Settings → Транскрибация** shows a *«Скачать поддержку GPU (~1.7 ГБ)»* button when CUDA isn't
-  present. It downloads the pinned `nvidia-cublas-cu12` + `nvidia-cudnn-cu12` wheels from PyPI
-  (`src/cuda_support.py`) and extracts their DLLs into `<app data>/cuda/nvidia/*/bin`.
+- The **first run with device `cuda`** (and CUDA not yet present) runs a **`download` step** before
+  transcription — `workflows._ensure_cuda` downloads the pinned `nvidia-cublas-cu12` +
+  `nvidia-cudnn-cu12` wheels from PyPI (`src/cuda_support.py`) and extracts their DLLs into
+  `<app data>/cuda/nvidia/*/bin`. It streams byte progress as a normal progress ring and the run's
+  **Stop** button cancels it mid-download (leaving no completion sentinel → it re-offers next time).
 - `providers.whisper._set_cuda_paths()` (frozen branch) adds that dir to `PATH` so ctranslate2 finds
-  the libs. Picking device `cuda` before downloading yields a clear error, not a cryptic dlopen fail.
+  the libs. A version-stamped sentinel (`<cuda dir>/.recap-cuda-complete`) marks a *complete*
+  download, so a killed one never reports installed.
 - The pinned versions in `cuda_support.CUDA_PACKAGES` must match `pyproject.toml` (the DLL SONAMEs
   must match ctranslate2). Bump them together.
+- Prefer CPU or unsure? Set the device to `cpu`/`auto` in Settings — no download happens.
 
 ## Caveats
 - **ffmpeg.** Full-mode preprocessing shells out to `ffmpeg`. The portable build does **not** bundle
