@@ -16,18 +16,25 @@ import { dirName, fileName, stem } from "@/lib/utils";
 
 export const STEP_ORDER: StepName[] = ["preprocess", "transcribe", "summarize", "export"];
 
-// Which steps each run mode actually executes — drives the progress display (#10).
+// Filesystem-safe local timestamp (no ":") for the per-run output folder, e.g. 2026-07-03_14-30-05.
+function runStamp(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
+}
+
+// Which steps each run mode shows as progress rings. "export" (writing files) is folded into the
+// summarize ring — it's near-instant and a separate ring reads as a redundant second circle.
 export const MODE_STEPS: Record<RunMode, StepName[]> = {
-  full: ["preprocess", "transcribe", "summarize", "export"],
+  full: ["preprocess", "transcribe", "summarize"],
   preprocess: ["preprocess"],
-  transcribe: ["preprocess", "transcribe"],
-  summarize: ["summarize", "export"],
+  transcribe: ["transcribe"],
+  summarize: ["summarize"],
 };
 
-// Steps actually shown for a run. Preprocessing is mandatory (always shown) only for the full
-// pipeline; in transcribe mode it runs — and shows — only when enabled in settings.
-export function visibleSteps(runMode: RunMode, preprocessEnabled: boolean): StepName[] {
-  if (runMode === "transcribe" && !preprocessEnabled) return ["transcribe"];
+// Steps actually shown for a run. Each mode's rings are now static (transcribe never preprocesses;
+// preprocessing runs only in full/preprocess).
+export function visibleSteps(runMode: RunMode): StepName[] {
   return MODE_STEPS[runMode];
 }
 
@@ -178,9 +185,12 @@ export function useRecap() {
     pushLog("success", `Файл выбран: ${fileName(audioPath)}`);
 
     const base = stem(audioPath);
-    // Outputs go into the single configured "Папка для результатов" (output_dir), named by the
-    // input stem — so distinct meetings don't overwrite each other. null → next to the input file.
-    const outDir = settings.output_dir?.trim() || dirName(audioPath);
+    // full/transcribe (audio input) each get their own folder {stem}_{timestamp} inside the
+    // configured "Папка для результатов" (or next to the input). summarize takes a transcript that
+    // already lives in such a folder, so it writes the summary NEXT TO the transcript — keeping
+    // nesting at one level. The backend's _ensure_parent() creates the folder on first write.
+    const baseDir = settings.output_dir?.trim() || dirName(audioPath);
+    const outDir = runMode === "summarize" ? dirName(audioPath) : `${baseDir}/${base}_${runStamp()}`;
     const bridge = await getBridge();
     // No per-run overrides: the bridge uses the saved settings authoritatively (fixes the stale-model bug).
     try {
@@ -240,7 +250,9 @@ export function useRecap() {
     setSteps((prev) => ({ ...prev, summarize: { status: "pending", percent: null }, export: { status: "pending", percent: null } }));
     pushLog("running", "Повтор суммаризации по сохранённому транскрипту…");
 
-    const summaryPath = result?.summary_path ?? `${dirName(audioPath)}/${stem(audioPath)}_summary.txt`;
+    // On partial_success result.summary_path is null; derive it next to the transcript (its per-run
+    // folder), NOT the audio — so the retried summary lands beside its transcript, not scattered.
+    const summaryPath = result?.summary_path ?? `${dirName(transcriptPath)}/${stem(audioPath)}_summary.txt`;
     const bridge = await getBridge();
     try {
       const res = await bridge.resummarize(
@@ -326,6 +338,20 @@ export function useRecap() {
     setPhase("done");
   }, []);
 
+  const saveSummary = useCallback(async () => {
+    if (!result?.summary_path) throw new Error("Нет файла саммари для сохранения");
+    const bridge = await getBridge();
+    const res = await bridge.saveSummary({
+      summary_text: editedSummary,
+      summary_path: result.summary_path,
+      mode: runConfig?.mode ?? settings?.summarization.mode ?? "medium",
+    });
+    // Reflect the saved state so the editor is no longer "dirty" and reopening shows the edits.
+    setResult((prev) =>
+      prev ? { ...prev, summary_text: editedSummary, summary_json_path: res.json_path } : prev,
+    );
+  }, [result, editedSummary, runConfig, settings]);
+
   const removeHistoryItem = useCallback(
     async (id: string) => {
       const bridge = await getBridge();
@@ -365,6 +391,7 @@ export function useRecap() {
     start,
     retrySummarization,
     cancel,
+    saveSummary,
     openHistoryItem,
     removeHistoryItem,
   };
@@ -372,4 +399,4 @@ export function useRecap() {
 
 export type RecapController = ReturnType<typeof useRecap>;
 
-export const DEFAULT_EXPORT_FORMATS: ExportFormat[] = ["telegram", "plain", "json"];
+export const DEFAULT_EXPORT_FORMATS: ExportFormat[] = ["markdown", "plain", "html", "json"];

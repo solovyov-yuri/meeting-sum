@@ -1,7 +1,8 @@
-import { AlertTriangle, FileAudio, Play, Square, XCircle } from "lucide-react";
+import { AlertTriangle, FileAudio, Play, Save, Square, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Segmented, Textarea, type SegmentedOption } from "@/components/ui/controls";
+import { useToast } from "@/components/ui/toast";
 import { cn, fileName } from "@/lib/utils";
 import { visibleSteps, type LogEntry, type Phase, type StepState } from "@/hooks/useRecap";
 import type { RunMode, RunResult, StepName } from "@/lib/types";
@@ -25,7 +26,6 @@ interface WorkspaceProps {
   audioPath: string | null;
   runMode: RunMode;
   setRunMode: (m: RunMode) => void;
-  preprocessEnabled: boolean;
   steps: Record<StepName, StepState>;
   logs: LogEntry[];
   result: RunResult | null;
@@ -37,6 +37,7 @@ interface WorkspaceProps {
   onStart: () => void;
   onCancel: () => void;
   onRetry: () => void;
+  onSaveSummary: () => Promise<void>;
 }
 
 export function Workspace(props: WorkspaceProps) {
@@ -77,7 +78,7 @@ export function Workspace(props: WorkspaceProps) {
     <main className="flex flex-1 flex-col gap-3 overflow-hidden p-4">
       <ModeBar runMode={props.runMode} setRunMode={props.setRunMode} disabled={phase === "running"} />
       <FileHeader {...props} />
-      {showSteps && <ProgressSteps steps={steps} order={visibleSteps(props.runMode, props.preprocessEnabled)} />}
+      {showSteps && <ProgressSteps steps={steps} order={visibleSteps(props.runMode)} />}
       {phase === "done" && result && <ResultBanner result={result} onRetry={props.onRetry} onSwitchTranscript={() => setTab("transcript")} />}
 
       <div className="flex min-h-0 flex-1 flex-col rounded-card border border-border bg-panel">
@@ -101,6 +102,7 @@ export function Workspace(props: WorkspaceProps) {
               result={result}
               value={props.editedSummary}
               onChange={props.setEditedSummary}
+              onSave={props.onSaveSummary}
             />
           )}
           {tab === "log" && <LogView logs={logs} />}
@@ -221,13 +223,18 @@ function SummaryTab({
   result,
   value,
   onChange,
+  onSave,
 }: {
   phase: Phase;
   runMode: RunMode;
   result: RunResult | null;
   value: string;
   onChange: (v: string) => void;
+  onSave: () => Promise<void>;
 }) {
+  const { toast } = useToast();
+  const [saving, setSaving] = useState(false);
+
   if (runMode === "preprocess") {
     return <p className="p-3.5 text-base text-ink-muted">В режиме «Подготовка» саммари не создаётся — см. вкладку «Лог».</p>;
   }
@@ -240,12 +247,32 @@ function SummaryTab({
   if (result.status === "partial_success") {
     return <p className="p-3.5 text-base text-ink-muted">Саммари не создано. Исправьте настройки и повторите суммаризацию.</p>;
   }
+
+  const dirty = value !== (result.summary_text ?? "");
+  const save = async () => {
+    setSaving(true);
+    try {
+      await onSave();
+      toast("Саммари сохранено", "ok");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Не удалось сохранить саммари", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <div className="h-full p-3.5">
+    <div className="flex h-full flex-col gap-2 p-3.5">
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-ink-muted">{dirty ? "Есть несохранённые изменения" : "Изменения сохранены"}</span>
+        <Button variant="primary" size="sm" onClick={save} disabled={saving || !dirty}>
+          <Save className="h-4 w-4" /> Сохранить
+        </Button>
+      </div>
       <Textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-full resize-none"
+        className="flex-1 resize-none"
         aria-label="Редактируемое саммари"
       />
     </div>

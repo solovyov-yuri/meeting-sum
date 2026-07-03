@@ -10,6 +10,8 @@ import type {
   ProgressEvent,
   RunRequest,
   RunResult,
+  SaveSummaryRequest,
+  SaveSummaryResult,
 } from "./types";
 
 export function isTauri(): boolean {
@@ -29,6 +31,7 @@ export interface Bridge {
   deleteHistoryItem(id: string): Promise<void>;
   readText(path: string | null): Promise<{ text: string | null; exists: boolean }>;
   exportSummary(req: ExportRequest): Promise<ExportResult>;
+  saveSummary(req: SaveSummaryRequest): Promise<SaveSummaryResult>;
   runRecap(req: RunRequest, onProgress: ProgressHandler): Promise<RunResult>;
   resummarize(req: RunRequest, onProgress: ProgressHandler): Promise<RunResult>;
   cancelRun(): Promise<void>;
@@ -57,6 +60,7 @@ async function tauriBridge(): Promise<Bridge> {
     deleteHistoryItem: (id) => invoke("delete_history_item", { id }),
     readText: (path) => invoke<{ text: string | null; exists: boolean }>("read_text", { path }),
     exportSummary: (req) => invoke<ExportResult>("export_summary", { req }),
+    saveSummary: (req) => invoke<SaveSummaryResult>("save_summary", { req }),
     cancelRun: () => invoke("cancel_run"),
     async runRecap(req, onProgress) {
       const unlisten = await listen<ProgressEvent>("recap-progress", (e) => onProgress(e.payload));
@@ -250,10 +254,18 @@ function browserBridge(): Bridge {
       await delay(150);
       const dir = req.target_dir || "C:/recap/output";
       return {
-        telegram_path: req.formats.includes("telegram") ? `${dir}/${req.base_name}_summary.txt` : null,
+        markdown_path: req.formats.includes("markdown") ? `${dir}/${req.base_name}_summary.md` : null,
         plain_path: req.formats.includes("plain") ? `${dir}/${req.base_name}_summary_plain.txt` : null,
+        html_path: req.formats.includes("html") ? `${dir}/${req.base_name}_summary.html` : null,
         json_path: req.formats.includes("json") ? `${dir}/${req.base_name}_summary.json` : null,
       };
+    },
+    async saveSummary(req) {
+      await delay(120);
+      const jsonPath = req.summary_path.replace(/\.txt$/, ".json");
+      files[req.summary_path] = req.summary_text;
+      files[jsonPath] = JSON.stringify({ mode: req.mode, edited: true });
+      return { summary_path: req.summary_path, json_path: jsonPath };
     },
     async cancelRun() {
       cancelled = true;

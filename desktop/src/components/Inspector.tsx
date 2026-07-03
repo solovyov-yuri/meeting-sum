@@ -22,8 +22,9 @@ const RUN_MODE_LABELS: Record<RunMode, string> = {
 };
 
 const EXPORT_LABELS: Record<ExportFormat, string> = {
-  telegram: "Telegram (.txt)",
-  plain: "Plain text (.txt)",
+  markdown: "Markdown (.md)",
+  plain: "Обычный текст (.txt)",
+  html: "HTML (.html)",
   json: "JSON",
 };
 
@@ -65,7 +66,8 @@ function RunInspector({ settings, runMode }: InspectorProps) {
   const s = settings.summarization;
   const usesTranscribe = runMode === "full" || runMode === "transcribe";
   const usesSummarize = runMode === "full" || runMode === "summarize";
-  const usesPreprocess = runMode === "full" || runMode === "preprocess" || runMode === "transcribe";
+  // Transcribe no longer preprocesses; only full (mandatory) and the explicit preprocess mode do.
+  const usesPreprocess = runMode === "full" || runMode === "preprocess";
 
   const rows: [string, React.ReactNode][] = [["Режим", RUN_MODE_LABELS[runMode]]];
   if (usesTranscribe) {
@@ -77,8 +79,7 @@ function RunInspector({ settings, runMode }: InspectorProps) {
     rows.push(["Модель (саммари)", s.model.name]);
     rows.push(["Режим саммари", MODE_LABELS[s.mode]]);
   }
-  if (usesPreprocess)
-    rows.push(["Предобработка", runMode === "full" ? "вкл (обязательно)" : settings.preprocessing.enabled ? "вкл" : "выкл"]);
+  if (usesPreprocess) rows.push(["Предобработка", runMode === "full" ? "вкл (обязательно)" : "вкл"]);
 
   return (
     <>
@@ -94,7 +95,7 @@ function RunInspector({ settings, runMode }: InspectorProps) {
 
 function ResultInspector({ result, settings, runMode, audioPath, editedSummary, runConfig, onRetry }: InspectorProps) {
   const { toast } = useToast();
-  const [formats, setFormats] = useState<ExportFormat[]>(["telegram", "plain", "json"]);
+  const [formats, setFormats] = useState<ExportFormat[]>(["markdown", "plain", "html", "json"]);
   const [busy, setBusy] = useState(false);
   if (!result) return null;
 
@@ -130,6 +131,8 @@ function ResultInspector({ result, settings, runMode, audioPath, editedSummary, 
   const mode = runConfig?.mode ?? settings.summarization.mode;
   const basePath = result.summary_path ?? result.transcript_path ?? audioPath ?? "summary";
   const targetDir = dirName(basePath);
+  // Export renders from the saved base JSON — block it while the editor has unsaved edits.
+  const dirty = editedSummary !== (result.summary_text ?? "");
 
   const toggle = (f: ExportFormat) =>
     setFormats((prev) => (prev.includes(f) ? prev.filter((x) => x !== f) : [...prev, f]));
@@ -155,6 +158,7 @@ function ResultInspector({ result, settings, runMode, audioPath, editedSummary, 
     try {
       const bridge = await getBridge();
       await bridge.exportSummary({
+        summary_json_path: result.summary_json_path,
         summary_text: editedSummary,
         formats,
         target_dir: targetDir,
@@ -214,7 +218,8 @@ function ResultInspector({ result, settings, runMode, audioPath, editedSummary, 
           </label>
         ))}
         <p className="text-sm text-ink-soft">Папка: {targetDir}</p>
-        <Button variant="secondary" size="lg" className="w-full" onClick={doExport} disabled={busy || !editedSummary}>
+        {dirty && <p className="text-sm text-warn">Сначала сохраните изменения — экспорт берёт сохранённое саммари.</p>}
+        <Button variant="secondary" size="lg" className="w-full" onClick={doExport} disabled={busy || !editedSummary || dirty}>
           <Download className="h-4 w-4" /> Экспортировать
         </Button>
       </div>

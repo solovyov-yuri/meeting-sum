@@ -82,6 +82,7 @@ function Shell() {
           recap.newRun();
           setView("run");
         }}
+        onOpenRun={() => setView("run")}
         onOpenHistory={() => setView("run")}
         onOpenSettings={() => setView("settings")}
         history={recap.history}
@@ -100,7 +101,6 @@ function Shell() {
             audioPath={recap.audioPath}
             runMode={recap.runMode}
             setRunMode={recap.setRunMode}
-            preprocessEnabled={recap.settings.preprocessing.enabled}
             steps={recap.steps}
             logs={recap.logs}
             result={recap.result}
@@ -112,6 +112,7 @@ function Shell() {
             onStart={recap.start}
             onCancel={recap.cancel}
             onRetry={recap.retrySummarization}
+            onSaveSummary={recap.saveSummary}
           />
           <Inspector
             phase={recap.phase}

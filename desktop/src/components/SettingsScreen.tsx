@@ -426,9 +426,6 @@ function PreprocessingSection({ draft, update }: { draft: AppSettings; update: U
     <div>
       <SectionTitle>Предобработка аудио</SectionTitle>
       <FormGrid>
-        <Field label="Включить" tooltip="Готовить аудио перед распознаванием (конвертация, нормализация). Нужен ffmpeg." hint="Требуется ffmpeg">
-          <Switch checked={p.enabled} onChange={(v) => update((d) => (d.preprocessing.enabled = v))} />
-        </Field>
         <Field label="Нормализация громкости" tooltip="Выровнять громкость, чтобы тихие голоса были слышны." hint="EBU R128 loudnorm">
           <Switch
             checked={p.loudness_normalization}

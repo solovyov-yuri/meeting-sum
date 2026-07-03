@@ -7,7 +7,7 @@ export type ChunkingMode = "chunk" | "truncate";
 export type SummaryProvider = "openai" | "xai" | "ollama" | "lm-studio" | "vllm";
 export type WhisperDevice = "cuda" | "cpu" | "auto";
 export type ComputeType = "default" | "float16" | "int8" | "int8_float16" | "float32";
-export type ExportFormat = "telegram" | "plain" | "json";
+export type ExportFormat = "markdown" | "plain" | "html" | "json";
 
 export interface TranscriptionModelSettings {
   provider: "faster-whisper";
@@ -127,6 +127,9 @@ export interface HistoryItem {
 }
 
 export interface ExportRequest {
+  // Export renders every format from the base .json (summary_json_path). summary_text is a fallback
+  // for when no JSON exists yet.
+  summary_json_path: string | null;
   summary_text: string;
   formats: ExportFormat[];
   target_dir: string;
@@ -135,7 +138,19 @@ export interface ExportRequest {
 }
 
 export interface ExportResult {
-  telegram_path: string | null;
+  markdown_path: string | null;
   plain_path: string | null;
+  html_path: string | null;
   json_path: string | null;
+}
+
+export interface SaveSummaryRequest {
+  summary_text: string;
+  summary_path: string;
+  mode: string;
+}
+
+export interface SaveSummaryResult {
+  summary_path: string;
+  json_path: string;
 }

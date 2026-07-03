@@ -173,6 +173,13 @@ async fn export_summary(app: AppHandle, req: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
+async fn save_summary(app: AppHandle, req: Value) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || run_bridge(&app, "save_summary", req))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn read_text(app: AppHandle, path: Option<String>) -> Result<Value, String> {
     let payload = json!({ "path": path });
     tauri::async_runtime::spawn_blocking(move || run_bridge(&app, "read_text", payload))
@@ -478,6 +485,7 @@ pub fn run() {
             get_history,
             delete_history_item,
             export_summary,
+            save_summary,
             read_text,
             run_recap,
             resummarize,

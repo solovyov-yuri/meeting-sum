@@ -1,4 +1,4 @@
-import { ChevronDown, FolderOpen, History, Plus, Settings as SettingsIcon, Trash2 } from "lucide-react";
+import { ChevronDown, FileText, FolderOpen, History, Plus, Settings as SettingsIcon, Trash2 } from "lucide-react";
 import { useState } from "react";
 import iconUrl from "@/assets/recap-icon.png";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { StatusDot } from "./StatusDot";
 interface SidebarProps {
   view: "run" | "settings";
   onNewRun: () => void;
+  onOpenRun: () => void;
   onOpenHistory: () => void;
   onOpenSettings: () => void;
   history: HistoryItem[];
@@ -21,6 +22,7 @@ interface SidebarProps {
 export function Sidebar({
   view,
   onNewRun,
+  onOpenRun,
   onOpenHistory,
   onOpenSettings,
   history,
@@ -44,6 +46,7 @@ export function Sidebar({
       </div>
 
       <nav className="flex flex-col gap-0.5 px-2">
+        <NavItem icon={FileText} label="Текущий разбор" active={view === "run"} onClick={onOpenRun} />
         <NavItem icon={SettingsIcon} label="Настройки" active={view === "settings"} onClick={onOpenSettings} />
         <button
           onClick={() => {
@@ -51,8 +54,7 @@ export function Sidebar({
             setRecentOpen((o) => !o);
           }}
           className={cn(
-            "flex h-[34px] items-center gap-2 rounded-md px-2.5 text-base transition-colors",
-            view === "run" ? "bg-accent-soft font-semibold text-accent" : "text-ink hover:bg-app",
+            "flex h-[34px] items-center gap-2 rounded-md px-2.5 text-base transition-colors text-ink hover:bg-app",
           )}
         >
           <History className="h-4 w-4" />
