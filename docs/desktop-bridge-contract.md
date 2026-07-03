@@ -296,8 +296,9 @@ Input:
 
 ```json
 {
-  "summary_text": "...edited by user...",
-  "formats": ["telegram", "plain", "json"],
+  "summary_json_path": "C:/.../meeting_2026_06_19_summary.json",
+  "summary_text": "...edited Markdown (fallback if no/empty base json)...",
+  "formats": ["markdown", "plain", "html", "json"],
   "target_dir": "C:/meetings/output",
   "base_name": "meeting_2026_06_19",
   "mode": "medium"
@@ -308,8 +309,9 @@ Output:
 
 ```json
 {
-  "telegram_path": "C:/.../meeting_2026_06_19_summary.txt",
+  "markdown_path": "C:/.../meeting_2026_06_19_summary.md",
   "plain_path": "C:/.../meeting_2026_06_19_summary_plain.txt",
+  "html_path": "C:/.../meeting_2026_06_19_summary.html",
   "json_path": "C:/.../meeting_2026_06_19_summary.json"
 }
 ```

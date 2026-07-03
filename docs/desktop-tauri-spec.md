@@ -20,9 +20,9 @@ Desktop-приложение не должно переписывать бизн
 - Summary можно редактировать перед копированием/экспортом.
 - Transcript в MVP readonly.
 - Прогресс: live-лог этапов, summary показывается финально после завершения LLM-запроса.
-- Экспорт: Telegram `.txt`, plain `.txt`, JSON.
+- Экспорт: Markdown `.md`, обычный текст `.txt`, HTML `.html`, JSON.
 - Settings: полноценный экран настроек.
-- Preprocessing: показывать в настройках toggle `enabled` и базовые параметры.
+- Preprocessing: в desktop всегда включён (toggle `enabled` в настройках убран); показываем только базовые параметры.
 - History хранит метаданные и ссылки на файлы результата, не копии transcript/summary.
 
 ## 3. MVP scope
@@ -46,7 +46,7 @@ Desktop-приложение не должно переписывать бизн
 - Просмотр transcript.
 - Просмотр и редактирование summary.
 - Копирование summary.
-- Экспорт summary в Telegram/plain/JSON.
+- Экспорт summary в Markdown/plain/HTML/JSON.
 - Открытие папки с результатами.
 - История последних запусков.
 - Экран настроек:
@@ -104,8 +104,9 @@ src/
 
 - **Язык сообщений.** `RunResult.error_message` из `workflows` — на русском (для UI). CLI-команды
   (`summarize`/`run`/`batch`) печатают собственные **английские** сообщения и коды выхода.
-- **Файлы результата.** CLI пишет один файл под выбранный `--format` (telegram `.txt` **или** json
-  `.json`). Desktop (`run_one_file`) всегда пишет telegram `.txt` **и** `.json` рядом.
+- **Файлы результата.** CLI пишет один файл под выбранный `--format` (markdown `.txt` **или** json
+  `.json`). Desktop (`run_one_file`) всегда пишет markdown `.txt` **и** `.json` рядом; экспорт из UI
+  даёт markdown `.md`, plain `.txt`, HTML `.html`, JSON `.json`.
 - **Пустая транскрипция.** `run`/`run_one_file` трактуют «речь не распознана» как ошибку (exit 1 /
   статус `failed`); `batch` считает такой файл обработанным и идёт дальше. Это расхождение
   зафиксировано как открытый вопрос (см. roadmap ARCH-001) — унификация изменит поведение `batch`.
@@ -337,7 +338,7 @@ Partial success:
 - Transcript записывается на диск до начала LLM-суммаризации.
 - При LLM-ошибке transcript остается доступным в UI и на диске.
 - Summary можно редактировать после генерации.
-- Экспорт работает в Telegram `.txt`, plain `.txt`, JSON.
+- Экспорт работает в Markdown `.md`, plain `.txt`, HTML `.html`, JSON.
 - История показывает последние запуски и открывает связанные файлы/папки.
 - Настройки читаются из текущей nested config schema и сохраняются без unknown keys.
 - API key не пишется открытым текстом в `config.yaml`.

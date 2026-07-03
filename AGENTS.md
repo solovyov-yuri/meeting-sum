@@ -65,11 +65,13 @@ src/
 ├── secrets_store.py  # API keys in the OS keychain (keyring); never in config.yaml / history / logs
 ├── config.py         # nested frozen Settings dataclasses + Settings.load() (yaml → env, strict validation)
 ├── transcript.py     # Segment + Transcript (frozen); from_file / to_text / to_file_format
-├── formatters.py     # to_telegram(), to_plain(), to_json()
-├── models.py         # MeetingSummary dataclass (JSON output)
+├── formatters.py     # render from the structured MeetingSummary: render_markdown/to_plain/to_html/
+│                     #   to_json + parse_summary() (Markdown→object, the editable-text/export path)
+├── models.py         # MeetingSummary / Section / Action — structured summary, the single source of truth
+├── summary_schema.py # JSON schema for response_format + parse_summary_json() (LLM JSON → MeetingSummary)
 ├── utils.py          # write_text_atomic()
 ├── preprocessing.py  # preprocess_audio() + prepared_audio() context manager (ffmpeg)
-├── prompts.py        # PROMPTS[lang][mode] + CHUNK_PROMPTS; get_prompt(); SUMMARY_MODES
+├── prompts.py        # PROMPTS[lang][mode] + CHUNK_PROMPTS + JSON_PROMPTS[lang][mode]; get_prompt()
 └── providers/
     ├── factory.py    # make_summarizer() / make_transcriber() — the single provider wiring point
     ├── whisper.py    # WhisperTranscriber (lazy faster_whisper import after CUDA path setup)
@@ -140,12 +142,19 @@ Non-obvious semantics:
 - **Atomic writes.** All file output goes through `utils.write_text_atomic()` — never `Path.write_text()` in production code.
 - **Secrets.** API keys live only in the OS keychain (`secrets_store.py`); they must never reach `config.yaml`,
   `history.json`, or logs. The UI shows only a masked boolean.
-- **LLM streaming.** `LLMSummarizer.summarize()` streams tokens to stderr and returns the full string.
+- **LLM streaming.** `LLMSummarizer.summarize()` streams tokens to stderr and returns the full string
+  (raw text, or JSON when `structured=True`). It stays "dumb": validation/parsing live above it.
+- **Structured summary pipeline.** The `MeetingSummary` object is the single source of truth for all
+  formats. `workflows._generate_summary()` tries JSON generation (`response_format`, modes in
+  `JSON_PROMPTS` only) → `parse_summary_json`; any failure (provider rejects `response_format`,
+  invalid JSON, schema mismatch) falls back to the text prompt + `formatters.parse_summary`. The
+  canonical/editable form is Markdown (`render_markdown`); exports re-parse the possibly-edited
+  Markdown via `parse_summary`, so that parser is permanent — keep the render/parse round-trip exact.
 - **Immutable transcript.** `Transcript.segments` is `tuple[Segment, ...]`.
 - **Preprocessing.** The `preprocess` command always runs ffmpeg (ignores `enabled`, since invoking it is itself
   the request); `transcribe`/`run`/`batch` use `prepared_audio()`, which respects `enabled`.
 
 Extending:
 - **New OpenAI-compatible provider:** add its preset URL to `PROVIDER_PRESETS` in `config.py` — nothing else changes.
-- **New summary mode:** add prompt constants in `prompts.py`, register under `PROMPTS["ru"][name]`, add the name to `SUMMARY_MODES`.
+- **New summary mode:** add prompt constants in `prompts.py`, register under `PROMPTS["ru"][name]`, add the name to `SUMMARY_MODES`. Optionally add a JSON prompt under `JSON_PROMPTS["ru"][name]` to enable structured generation for it (else it uses the text path).
 - **New summary language:** add constants in `prompts.py`, register under `PROMPTS["<lang>"]` and `CHUNK_PROMPTS["<lang>"]`; config validation picks it up automatically.
