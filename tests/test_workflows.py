@@ -23,15 +23,19 @@ class FakeTranscriber:
 
 
 class FakeSummarizer:
+    supports_structured = False
+
     def __init__(self, response: str = "итоги встречи") -> None:
         self.response = response
 
-    def summarize(self, text: str) -> str:
+    def summarize(self, text: str, structured: bool = False) -> str:
         return self.response
 
 
 class FailingSummarizer:
-    def summarize(self, text: str) -> str:
+    supports_structured = False
+
+    def summarize(self, text: str, structured: bool = False) -> str:
         raise ConnectionError("LLM down")
 
 
@@ -175,7 +179,7 @@ def test_preprocess_one_missing_audio(tmp_path: Path) -> None:
 
 def test_run_one_file_success(tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     tr = Transcript(segments=(Segment(0.0, 1.0, "обсудили дорожную карту"),))
-    _patch_providers(monkeypatch, tr, FakeSummarizer("## Итог\n1. готово"))
+    _patch_providers(monkeypatch, tr, FakeSummarizer("*Тема встречи*\nИтоги готовы.\n\n*Решения и задачи*\n- готово"))
 
     events: list[ProgressEvent] = []
     options = RunOptions(
@@ -193,13 +197,65 @@ def test_run_one_file_success(tmp_path: Path, audio_file: Path, monkeypatch: pyt
     assert (tmp_path / "tr.txt").exists()
     assert (tmp_path / "sum.txt").exists()
     assert (tmp_path / "sum.json").exists()
-    # Telegram formatter ran on the raw response.
-    assert "*Итог*" in result.summary_text
+    # The raw response was parsed to a structured object and rendered back to canonical Markdown.
+    assert "## Тема встречи" in result.summary_text
+    assert "- готово" in result.summary_text
     assert "обсудили" in result.transcript_text
     steps_done = {(e.step, e.status) for e in events}
     assert ("transcribe", "success") in steps_done
     assert ("summarize", "success") in steps_done
     assert ("export", "success") in steps_done
+
+
+def test_run_one_file_structured_json_path(tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Happy path of the JSON feature: valid structured output is used and the text fallback is NOT taken."""
+    import json as _json
+
+    class StructuredSummarizer:
+        supports_structured = True
+
+        def __init__(self) -> None:
+            self.calls: list[bool] = []
+
+        def summarize(self, text: str, structured: bool = False) -> str:
+            self.calls.append(structured)
+            if structured:
+                return _json.dumps(
+                    {
+                        "intro": "Кратко о встрече",
+                        "sections": [{"title": "Тема А", "points": ["п1"], "actions": ["сделать"]}],
+                        "joke": None,
+                    },
+                    ensure_ascii=False,
+                )
+            return "ТЕКСТОВЫЙ ФОЛЛБЭК — не должен использоваться"
+
+    summarizer = StructuredSummarizer()
+    _patch_providers(monkeypatch, Transcript(segments=(Segment(0.0, 1.0, "речь"),)), summarizer)
+
+    options = RunOptions(
+        audio_path=audio_file,
+        transcript_path=tmp_path / "tr.txt",
+        summary_path=tmp_path / "sum.txt",
+        provider="ollama",
+        mode="medium",
+    )
+    result = run_one_file(options, settings=Settings(), progress=lambda e: None)
+
+    assert result.status == "success"
+    # Only the structured call was made — the text fallback was not taken.
+    assert summarizer.calls == [True]
+    assert "ФОЛЛБЭК" not in (result.summary_text or "")
+    # The rendered Markdown reflects the structured object.
+    assert "## Тема встречи\nКратко о встрече" in result.summary_text
+    assert "## Тема: Тема А" in result.summary_text
+    assert "- сделать" in result.summary_text
+    # The .json export is the structured block object.
+    data = _json.loads((tmp_path / "sum.json").read_text(encoding="utf-8"))
+    assert data["blocks"][0]["heading"] == "Тема встречи"
+    assert data["blocks"][0]["paragraphs"] == ["Кратко о встрече"]
+    assert data["blocks"][1]["heading"] == "Тема: Тема А"
+    assert data["blocks"][1]["groups"][1]["items"] == ["сделать"]
 
 
 def test_run_one_file_emits_transcribe_percent(
@@ -249,7 +305,9 @@ def test_run_one_file_empty_transcript_skips_llm(
     called = {"summarize": False}
 
     class TrackingSummarizer:
-        def summarize(self, text: str) -> str:
+        supports_structured = False
+
+        def summarize(self, text: str, structured: bool = False) -> str:
             called["summarize"] = True
             return "nope"
 

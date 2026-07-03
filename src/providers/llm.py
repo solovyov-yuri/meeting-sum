@@ -30,6 +30,7 @@ class LLMSummarizer:
         retry_backoff: float = 2.0,
         chunking_mode: str = "chunk",
         num_ctx: int | None = None,
+        json_prompt: tuple[str, str] | None = None,
     ) -> None:
         self._model = model
         self._api_key = api_key
@@ -42,6 +43,12 @@ class LLMSummarizer:
         self._retry_backoff = retry_backoff
         self._chunking_mode = chunking_mode
         self._num_ctx = num_ctx
+        self._json_prompt = json_prompt
+
+    @property
+    def supports_structured(self) -> bool:
+        """True when a JSON prompt is configured, so ``summarize(structured=True)`` is available."""
+        return self._json_prompt is not None
 
     def _build_messages(
         self,
@@ -61,7 +68,7 @@ class LLMSummarizer:
             {"role": "user", "content": user},
         ]
 
-    def _call_llm(self, messages: list[dict[str, str]], client, console) -> str:
+    def _call_llm(self, messages: list[dict[str, str]], client, console, response_format: dict | None = None) -> str:
         """Make one streaming LLM call with retry. Returns the full response string."""
         import time  # noqa: PLC0415
 
@@ -96,11 +103,15 @@ class LLMSummarizer:
                 extra: dict = {}
                 if self._num_ctx is not None:
                     extra["options"] = {"num_ctx": self._num_ctx}
+                kwargs: dict = {}
+                if response_format is not None:
+                    kwargs["response_format"] = response_format
                 with client.chat.completions.create(
                     model=self._model,
                     messages=messages,
                     stream=True,
                     extra_body=extra or None,
+                    **kwargs,
                 ) as stream:
                     for chunk in stream:
                         if chunk.choices and (delta := chunk.choices[0].delta.content):
@@ -163,7 +174,14 @@ class LLMSummarizer:
         messages = self._build_messages(chunk, prompt_template=self._chunk_prompt)
         return f"[Часть {i}]\n{self._call_llm(messages, client, console)}"
 
-    def _chunked_summarize(self, transcript_text: str, client, console, _depth: int = 0) -> str:
+    def _final_call(self, text: str, client, console, structured: bool) -> str:
+        """The final (whole-transcript or merged) summarization pass, optionally as JSON."""
+        template = self._json_prompt if structured else None
+        response_format = {"type": "json_object"} if structured else None
+        messages = self._build_messages(text, prompt_template=template)
+        return self._call_llm(messages, client, console, response_format=response_format)
+
+    def _chunked_summarize(self, transcript_text: str, client, console, structured: bool = False, _depth: int = 0) -> str:
         chunks = self._split_into_chunks(transcript_text)
         logger.info("Transcript split into %d chunks for summarization.", len(chunks))
 
@@ -187,19 +205,24 @@ class LLMSummarizer:
                     "Merged summaries (%d chars) exceed max_chars; applying another round of chunking.",
                     len(merged),
                 )
-                return self._chunked_summarize(merged, client, console, _depth + 1)
+                return self._chunked_summarize(merged, client, console, structured, _depth + 1)
             logger.warning(
                 "Merged summaries still exceed max_chars after %d rounds; truncating for final merge.",
                 _depth,
             )
             merged = _truncate(merged, self._max_chars)
 
-        messages = self._build_messages(merged)
-        return self._call_llm(messages, client, console)
+        # Chunks are summarized as text; only the final merge is asked for JSON (per design).
+        return self._final_call(merged, client, console, structured)
 
-    def summarize(self, transcript_text: str) -> str:
+    def summarize(self, transcript_text: str, structured: bool = False) -> str:
+        """Summarize the transcript. With ``structured=True`` the final pass returns JSON
+        (requires ``supports_structured``); otherwise it returns the Markdown-ish text summary."""
         import openai  # noqa: PLC0415 — deferred to keep CLI startup fast
         from rich.console import Console  # noqa: PLC0415
+
+        if structured and self._json_prompt is None:
+            raise ValueError("structured=True requires a json_prompt")
 
         if len(transcript_text) > self._max_chars and self._chunking_mode == "truncate":
             logger.warning(
@@ -220,7 +243,6 @@ class LLMSummarizer:
         console = Console(stderr=True)
 
         if len(transcript_text) > self._max_chars:
-            return self._chunked_summarize(transcript_text, client, console)
+            return self._chunked_summarize(transcript_text, client, console, structured=structured)
 
-        messages = self._build_messages(transcript_text)
-        return self._call_llm(messages, client, console)
+        return self._final_call(transcript_text, client, console, structured)

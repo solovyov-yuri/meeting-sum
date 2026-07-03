@@ -17,7 +17,9 @@ class FakeTranscriber:
 
 
 class FakeSummarizer:
-    def summarize(self, text: str) -> str:
+    supports_structured = False
+
+    def summarize(self, text: str, structured: bool = False) -> str:
         return "краткое резюме"
 
 
@@ -117,18 +119,72 @@ def test_export_summary_writes_requested_formats(tmp_path: Path) -> None:
     out.mkdir()  # SEC-003: export requires an existing directory
     res = desktop_bridge.export_summary(
         {
-            "summary_text": "## Тема\n1. пункт",
-            "formats": ["telegram", "plain", "json"],
+            "summary_text": "## Тема\n- пункт",
+            "formats": ["markdown", "plain", "html", "json"],
             "target_dir": str(out),
             "base_name": "meeting",
             "mode": "medium",
         }
     )
-    assert Path(res["telegram_path"]).exists()
+    assert Path(res["markdown_path"]).exists()
     assert Path(res["plain_path"]).exists()
+    assert Path(res["html_path"]).exists()
     assert Path(res["json_path"]).exists()
+    assert Path(res["html_path"]).read_text(encoding="utf-8").startswith("<!doctype html>")
     data = json.loads(Path(res["json_path"]).read_text(encoding="utf-8"))
     assert data["mode"] == "medium"
+
+
+def test_export_summary_renders_from_base_json(tmp_path: Path) -> None:
+    # Export must render from the saved base .json (single source of truth), not the summary_text.
+    base_json = tmp_path / "m_summary.json"
+    base_json.write_text(
+        json.dumps(
+            {
+                "mode": "medium",
+                "blocks": [
+                    {"heading": "Тема встречи", "paragraphs": ["Из JSON"], "groups": []},
+                    {"heading": "Тема: A", "paragraphs": [], "groups": [{"label": "Ключевые обсуждения", "items": ["п1"]}]},
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    res = desktop_bridge.export_summary(
+        {
+            "summary_json_path": str(base_json),
+            "summary_text": "ИГНОРИРУЕТСЯ, если есть json",
+            "formats": ["markdown", "html"],
+            "target_dir": str(tmp_path),
+            "base_name": "m",
+            "mode": "medium",
+        }
+    )
+    md = Path(res["markdown_path"]).read_text(encoding="utf-8")
+    assert "## Тема встречи\nИз JSON" in md
+    assert "## Тема: A" in md
+    assert "ИГНОРИРУЕТСЯ" not in md
+    assert "<h2>Тема: A</h2>" in Path(res["html_path"]).read_text(encoding="utf-8")
+
+
+def test_export_summary_falls_back_from_old_format_json(tmp_path: Path) -> None:
+    # A reopened old-format {mode, summary} base .json deserializes empty → must fall back to
+    # summary_text (the reopened Markdown), not export blank files.
+    old_json = tmp_path / "m_summary.json"
+    old_json.write_text(json.dumps({"mode": "medium", "summary": "старый текст"}), encoding="utf-8")
+    res = desktop_bridge.export_summary(
+        {
+            "summary_json_path": str(old_json),
+            "summary_text": "*Тема встречи*\nВосстановлено из markdown",
+            "formats": ["markdown"],
+            "target_dir": str(tmp_path),
+            "base_name": "m",
+            "mode": "medium",
+        }
+    )
+    md = Path(res["markdown_path"]).read_text(encoding="utf-8")
+    assert "Восстановлено из markdown" in md
 
 
 def test_export_summary_subset_formats(tmp_path: Path) -> None:
@@ -136,8 +192,39 @@ def test_export_summary_subset_formats(tmp_path: Path) -> None:
         {"summary_text": "x", "formats": ["json"], "target_dir": str(tmp_path), "base_name": "m"}
     )
     assert res["json_path"] is not None
-    assert res["telegram_path"] is None
+    assert res["markdown_path"] is None
     assert res["plain_path"] is None
+    assert res["html_path"] is None
+
+
+def test_save_summary_overwrites_markdown_and_json(tmp_path: Path) -> None:
+    summary_path = tmp_path / "meeting_summary.txt"
+    summary_path.write_text("старое", encoding="utf-8")
+    res = desktop_bridge.save_summary(
+        {
+            "summary_text": "## Тема встречи\nНовый текст\n\n## Тема: A\n### Решения и задачи\n- сделать",
+            "summary_path": str(summary_path),
+            "mode": "medium",
+        }
+    )
+    # Markdown file holds the edited text verbatim.
+    assert summary_path.read_text(encoding="utf-8").startswith("## Тема встречи\nНовый текст")
+    # JSON sibling is re-derived (structured) from the edited Markdown.
+    json_path = Path(res["json_path"])
+    assert json_path == tmp_path / "meeting_summary.json"
+    data = json.loads(json_path.read_text(encoding="utf-8"))
+    assert data["blocks"][0]["heading"] == "Тема встречи"
+    assert data["blocks"][0]["paragraphs"] == ["Новый текст"]
+    assert data["blocks"][1]["heading"] == "Тема: A"
+    assert data["blocks"][1]["groups"][0]["label"] == "Решения и задачи"
+    assert data["blocks"][1]["groups"][0]["items"] == ["сделать"]
+
+
+def test_save_summary_missing_dir_raises(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Каталог не существует"):
+        desktop_bridge.save_summary(
+            {"summary_text": "x", "summary_path": str(tmp_path / "nope" / "s_summary.txt"), "mode": "medium"}
+        )
 
 
 # ── run_recap + history ─────────────────────────────────────────────────────────

@@ -20,7 +20,7 @@ def make_summarizer(
 
     Raises ValueError for unknown provider, mode, or language.
     """
-    from prompts import CHUNK_PROMPTS, get_prompt  # noqa: PLC0415
+    from prompts import CHUNK_PROMPTS, JSON_PROMPTS, get_prompt  # noqa: PLC0415
 
     if provider_name not in PROVIDER_PRESETS:
         available = ", ".join(PROVIDER_PRESETS)
@@ -39,6 +39,9 @@ def make_summarizer(
         raise ValueError(str(exc)) from exc
 
     chunk_prompt = CHUNK_PROMPTS.get(effective_lang, CHUNK_PROMPTS["ru"])
+    # JSON (structured) generation is available only for modes registered in JSON_PROMPTS;
+    # everything else falls back to the text prompt + Markdown parsing.
+    json_prompt = JSON_PROMPTS.get(effective_lang, {}).get(mode_name)
 
     # An external (non-local) endpoint must have an explicit key. Without one the
     # OpenAI SDK would silently read OPENAI_API_KEY from the environment — the exact
@@ -66,6 +69,7 @@ def make_summarizer(
         max_retries=summarization.retries,
         chunking_mode=summarization.chunking_mode,
         num_ctx=model.num_ctx,
+        json_prompt=json_prompt,
     )
 
 

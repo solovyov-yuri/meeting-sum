@@ -426,11 +426,10 @@ def _append_history(entry: dict[str, Any]) -> None:
 
 
 def export_summary(payload: dict[str, Any]) -> dict[str, Any]:
-    from formatters import to_json, to_plain, to_telegram  # noqa: PLC0415
-    from models import MeetingSummary  # noqa: PLC0415
+    from formatters import parse_summary, render_markdown, to_html, to_json, to_plain  # noqa: PLC0415
+    from summary_schema import load_summary_json  # noqa: PLC0415
 
-    summary_text = payload["summary_text"]
-    formats = payload.get("formats") or ["telegram", "plain", "json"]
+    formats = payload.get("formats") or ["markdown", "plain", "html", "json"]
     target_dir = Path(payload["target_dir"])
     base_name = payload["base_name"]
     mode = payload.get("mode") or "medium"
@@ -439,22 +438,60 @@ def export_summary(payload: dict[str, Any]) -> dict[str, Any]:
     # create arbitrary directory trees at a webview-supplied path.
     if not target_dir.is_dir():
         raise ValueError(f"Каталог для экспорта не существует: {target_dir}")
-    out: dict[str, Any] = {"telegram_path": None, "plain_path": None, "json_path": None}
 
-    if "telegram" in formats:
-        path = target_dir / f"{base_name}_summary.txt"
-        write_text_atomic(path, to_telegram(summary_text))
-        out["telegram_path"] = str(path)
+    # The base .json (written by the run and by "Сохранить") is the single source of truth: every
+    # exported format is rendered from it. Fall back to parsing the (edited) Markdown summary_text
+    # when there is no JSON, or when the JSON is an old pre-structured {mode, summary} file that
+    # deserializes to an empty object — otherwise a reopened old-format item would export blank.
+    json_path = payload.get("summary_json_path")
+    summary = None
+    if json_path and Path(json_path).is_file():
+        summary = load_summary_json(Path(json_path).read_text(encoding="utf-8"))
+        if not summary.blocks:  # old/foreign JSON with no blocks → fall back to the Markdown
+            summary = None
+    if summary is None:
+        summary = parse_summary(payload.get("summary_text") or "", mode)
+    out: dict[str, Any] = {"markdown_path": None, "plain_path": None, "html_path": None, "json_path": None}
+
+    if "markdown" in formats:
+        path = target_dir / f"{base_name}_summary.md"
+        write_text_atomic(path, render_markdown(summary))
+        out["markdown_path"] = str(path)
     if "plain" in formats:
+        # Distinct name: {base}_summary.txt is the canonical (Markdown) summary the run writes and
+        # history reopens — plain text must not clobber it (plain does not round-trip the parser).
         path = target_dir / f"{base_name}_summary_plain.txt"
-        write_text_atomic(path, to_plain(summary_text))
+        write_text_atomic(path, to_plain(summary))
         out["plain_path"] = str(path)
+    if "html" in formats:
+        path = target_dir / f"{base_name}_summary.html"
+        write_text_atomic(path, to_html(summary))
+        out["html_path"] = str(path)
     if "json" in formats:
         path = target_dir / f"{base_name}_summary.json"
-        write_text_atomic(path, to_json(MeetingSummary(raw=summary_text, mode=mode)))
+        write_text_atomic(path, to_json(summary))
         out["json_path"] = str(path)
 
     return out
+
+
+def save_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    """Persist the edited summary: overwrite the canonical Markdown ``.txt`` and re-derive the
+    structured ``.json`` from it (parse Markdown → object → JSON). Mirrors what a run writes, so
+    reopening the history item reflects the edits."""
+    from formatters import parse_summary, to_json  # noqa: PLC0415
+
+    summary_text = payload["summary_text"]
+    summary_path = Path(payload["summary_path"])
+    mode = payload.get("mode") or "medium"
+
+    if not summary_path.parent.is_dir():
+        raise ValueError(f"Каталог не существует: {summary_path.parent}")
+
+    json_path = summary_path.with_name(f"{summary_path.stem}.json")
+    write_text_atomic(summary_path, summary_text)
+    write_text_atomic(json_path, to_json(parse_summary(summary_text, mode)))
+    return {"summary_path": str(summary_path), "json_path": str(json_path)}
 
 
 # ── run_recap ────────────────────────────────────────────────────────────────
@@ -537,9 +574,14 @@ def run_recap(
     if run_mode == "preprocess":
         result = workflows.preprocess_one(options, settings=settings, progress=emit)
     elif run_mode == "transcribe":
+        # Transcription never preprocesses in the desktop (the enable toggle was removed) — force
+        # preprocessing off regardless of the config value.
+        transcribe_settings = dataclasses.replace(
+            settings, preprocessing=dataclasses.replace(settings.preprocessing, enabled=False)
+        )
         result = workflows.run_one_file(
             options,
-            settings=settings,
+            settings=transcribe_settings,
             progress=emit,
             cancel=cancel,
             transcriber_factory=transcriber_factory,
@@ -733,6 +775,8 @@ def main(argv: list[str] | None = None) -> int:
             out = list_models(payload["provider"])
         elif command == "export_summary":
             out = export_summary(payload)
+        elif command == "save_summary":
+            out = save_summary(payload)
         elif command == "get_history":
             out = get_history()
         elif command == "read_text":

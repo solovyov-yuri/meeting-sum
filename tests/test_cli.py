@@ -376,14 +376,15 @@ def test_summarize_format_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 
     import providers.llm as llm_mod
 
-    monkeypatch.setattr(llm_mod.LLMSummarizer, "summarize", lambda self, text: "summary text")
+    # Return non-JSON text: the structured attempt fails validation and falls back to the text path.
+    monkeypatch.setattr(llm_mod.LLMSummarizer, "summarize", lambda self, text, structured=False: "summary text")
     result = runner.invoke(app, ["summarize", str(transcript), "-f", "json", "-o", str(out)])
     assert result.exit_code == 0
     import json
 
     data = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
     assert data["mode"] == "medium"
-    assert data["summary"] == "summary text"
+    assert data["blocks"][0]["paragraphs"][0] == "summary text"
 
 
 def test_summarize_format_json_stdout_is_pure_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -398,12 +399,12 @@ def test_summarize_format_json_stdout_is_pure_json(tmp_path: Path, monkeypatch: 
 
     import providers.llm as llm_mod
 
-    monkeypatch.setattr(llm_mod.LLMSummarizer, "summarize", lambda self, text: "clean summary")
+    monkeypatch.setattr(llm_mod.LLMSummarizer, "summarize", lambda self, text, structured=False: "clean summary")
     result = runner.invoke(app, ["summarize", str(transcript), "-f", "json"])
     assert result.exit_code == 0
     # result.stdout is pure stdout (Click 8 separates stdout/stderr)
     data = json.loads(result.stdout)
-    assert data["summary"] == "clean summary"
+    assert data["blocks"][0]["paragraphs"][0] == "clean summary"
     assert "Сохранено" in result.stderr
 
 

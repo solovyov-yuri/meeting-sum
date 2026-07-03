@@ -288,8 +288,8 @@ def summarize(
         typer.Option("--summary-language", help="Summary language (ru). Defaults to ru."),
     ] = None,
     output_format: Annotated[
-        str, typer.Option("-f", "--format", help="Which format to echo to stdout: telegram | json (both files are written)")
-    ] = "telegram",
+        str, typer.Option("-f", "--format", help="Which format to echo to stdout: markdown | json (both files are written)")
+    ] = "markdown",
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Show progress logs")] = False,
 ) -> None:
     """Generate a meeting summary from a transcript (writes .txt + .json)."""
@@ -303,8 +303,8 @@ def summarize(
         typer.echo(f"Configuration error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
-    if output_format not in ("telegram", "json"):
-        typer.echo(f"Unknown format: {output_format!r}. Available: telegram, json", err=True)
+    if output_format not in ("markdown", "json"):
+        typer.echo(f"Unknown format: {output_format!r}. Available: markdown, json", err=True)
         raise typer.Exit(code=1)
 
     provider_name = provider or settings.summarization.model.provider

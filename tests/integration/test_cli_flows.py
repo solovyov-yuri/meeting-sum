@@ -75,16 +75,18 @@ class PartialTranscriber:
 
 
 class FakeSummarizer:
-    """Returns a fixed LLM response without hitting the network."""
+    """Returns a fixed LLM response without hitting the network (text path — no structured JSON)."""
 
-    # Use raw Markdown so we can verify the formatter actually transforms it.
-    DEFAULT = "## Итог встречи\n1. обсудили дорожную карту"
+    # LLM's single-* heading style; the pipeline parses it to a structured object and re-renders it.
+    DEFAULT = "*Тема встречи*\nОбсудили дорожную карту.\n\n*Решения и задачи*\n- согласовать сроки"
+
+    supports_structured = False
 
     def __init__(self, response: str = DEFAULT) -> None:
         self.response = response
         self.received: list[str] = []
 
-    def summarize(self, text: str) -> str:
+    def summarize(self, text: str, structured: bool = False) -> str:
         self.received.append(text)
         return self.response
 
@@ -92,7 +94,9 @@ class FakeSummarizer:
 class FailingSummarizer:
     """Always raises — simulates LLM connection error."""
 
-    def summarize(self, text: str) -> str:
+    supports_structured = False
+
+    def summarize(self, text: str, structured: bool = False) -> str:
         raise ConnectionError("LLM down")
 
 
@@ -151,11 +155,13 @@ def test_summarize_writes_formatted_summary(
     assert result.exit_code == 0, result.stdout + result.stderr
     assert out.exists()
     content = out.read_text(encoding="utf-8")
-    # Telegram formatter converts "## Итог встречи" → "*Итог встречи*"
-    # and "1. item" → "- item". Verify both transformations ran on the raw LLM response.
-    assert "*Итог встречи*" in content
-    assert "- обсудили дорожную карту" in content
-    assert "## Итог" not in content  # raw Markdown must be gone
+    # LLM text was parsed to a structured object and re-rendered as canonical Markdown. Loose
+    # single-* headings all become top-level ## blocks (the fallback path flattens sub-labels).
+    assert "## Тема встречи" in content
+    assert "Обсудили дорожную карту." in content
+    assert "## Решения и задачи" in content
+    assert "- согласовать сроки" in content
+    assert "*Тема встречи*" not in content  # single-* heading must be normalised
     # "Summary saved" goes to stdout for non-JSON format (cli.py: err=output_format=="json")
     assert "Сохранено" in result.stderr
 
@@ -249,8 +255,9 @@ def test_summarize_json_file_output(
     assert result.exit_code == 0, result.stdout + result.stderr
     assert out.exists()
     data = json.loads(out.read_text(encoding="utf-8"))
-    assert data["summary"] == patch_factory.response
     assert data["mode"] == "medium"
+    assert data["blocks"][0]["heading"] == "Тема встречи"
+    assert data["blocks"][0]["paragraphs"] == ["Обсудили дорожную карту."]
 
 
 def test_summarize_json_stdout_is_pure_json(
@@ -265,7 +272,8 @@ def test_summarize_json_stdout_is_pure_json(
 
     assert result.exit_code == 0, result.stdout + result.stderr
     data = json.loads(result.stdout)
-    assert data["summary"] == patch_factory.response
+    assert data["mode"] == "medium"
+    assert data["blocks"][0]["paragraphs"] == ["Обсудили дорожную карту."]
     # status messages must not pollute stdout
     assert "сохранено" in result.stderr.lower()
 
@@ -293,7 +301,7 @@ def test_run_creates_both_output_files(
     # transcript contains the fake transcription text
     assert "карту" in tr_out.read_text(encoding="utf-8")
     # summary contains the formatted LLM response
-    assert "*Итог встречи*" in sum_out.read_text(encoding="utf-8")
+    assert "## Тема встречи" in sum_out.read_text(encoding="utf-8")
 
 
 def test_run_transcript_saved_before_llm_failure(
@@ -336,7 +344,9 @@ def test_run_empty_transcript_skips_llm(
     llm_called = [False]
 
     class TrackingSummarizer:
-        def summarize(self, text: str) -> str:
+        supports_structured = False
+
+        def summarize(self, text: str, structured: bool = False) -> str:
             llm_called[0] = True
             return "should not appear"
 
@@ -414,8 +424,8 @@ def test_batch_json_format(
     assert summary_file.exists()
     assert (tmp_path / "meeting_summary.txt").exists()  # batch always writes both now (ARCH-001)
     data = json.loads(summary_file.read_text(encoding="utf-8"))
-    assert "summary" in data
-    assert "mode" in data
+    assert "blocks" in data
+    assert data["mode"] == "medium"
 
 
 def test_batch_stem_collision_exits_before_any_processing(tmp_path: Path) -> None:

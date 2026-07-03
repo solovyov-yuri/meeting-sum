@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 from config import Settings
 
 if TYPE_CHECKING:
+    from models import MeetingSummary
     from providers.llm import LLMSummarizer
     from providers.whisper import WhisperTranscriber
     from transcript import Transcript
@@ -333,6 +334,30 @@ def preprocess_one(
     return RunResult("success", None, None, None, None, None, None, output_path=output_path)
 
 
+def _generate_summary(summarizer: LLMSummarizer, transcript_text: str, mode_name: str) -> MeetingSummary:
+    """Produce a structured summary: try JSON generation, else fall back to the text path.
+
+    Structured (JSON) generation is attempted only when the summarizer supports it (a JSON prompt
+    is registered for this mode). Any failure — provider rejects ``response_format``, invalid JSON,
+    schema mismatch — falls back to the text prompt + Markdown parsing so local models never break.
+    A failure of the *fallback* call propagates to the caller's step boundary.
+    """
+    from formatters import parse_summary  # noqa: PLC0415
+    from summary_schema import SummaryValidationError, parse_summary_json  # noqa: PLC0415
+
+    if summarizer.supports_structured:
+        try:
+            raw_json = summarizer.summarize(transcript_text, structured=True)
+            return parse_summary_json(raw_json, mode_name)
+        except SummaryValidationError as exc:
+            logger.warning("Structured summary did not validate (%s); falling back to text path.", exc)
+        except Exception:  # noqa: BLE001 - any provider/generation error → text fallback
+            logger.warning("Structured summary generation failed; falling back to text path.", exc_info=True)
+
+    raw = summarizer.summarize(transcript_text)
+    return parse_summary(raw, mode_name)
+
+
 def _summarize_and_export(
     settings: Settings,
     transcript: Transcript,
@@ -353,14 +378,13 @@ def _summarize_and_export(
     (during early validation) and hand it in. On LLM/IO failure returns ``partial_success``
     with the transcript paths preserved.
     """
-    from formatters import to_json, to_telegram  # noqa: PLC0415
-    from models import MeetingSummary  # noqa: PLC0415
+    from formatters import render_markdown, to_json  # noqa: PLC0415
     from utils import write_text_atomic  # noqa: PLC0415
 
     model_label = options.model or settings.summarization.model.name
     emit(ProgressEvent(STEP_SUMMARIZE, "running", f"Суммаризация началась: {provider_name} / {model_label}."))
     try:
-        raw = summarizer.summarize(transcript.to_text())
+        summary = _generate_summary(summarizer, transcript.to_text(), mode_name)
     except Exception as exc:
         logger.exception("Summarization failed")
         msg = humanize_error(exc)
@@ -370,14 +394,14 @@ def _summarize_and_export(
     emit(ProgressEvent(STEP_SUMMARIZE, "success", "Саммари готово."))
 
     emit(ProgressEvent(STEP_EXPORT, "running", "Сохранение результатов…"))
-    telegram_text = to_telegram(raw)
+    markdown_text = render_markdown(summary)
     try:
-        write_text_atomic(summary_path, telegram_text)
-        write_text_atomic(summary_json_path, to_json(MeetingSummary(raw=raw, mode=mode_name)))
+        write_text_atomic(summary_path, markdown_text)
+        write_text_atomic(summary_json_path, to_json(summary))
     except OSError as exc:
         msg = f"Не удалось сохранить саммари: {exc}"
         emit(ProgressEvent(STEP_EXPORT, "error", msg))
-        return RunResult("partial_success", transcript_path, None, None, transcript_text, telegram_text, msg)
+        return RunResult("partial_success", transcript_path, None, None, transcript_text, markdown_text, msg)
     emit(ProgressEvent(STEP_EXPORT, "success", f"Готово: {summary_path}", path=summary_path))
 
     return RunResult(
@@ -386,7 +410,7 @@ def _summarize_and_export(
         summary_path=summary_path,
         summary_json_path=summary_json_path,
         transcript_text=transcript_text,
-        summary_text=telegram_text,
+        summary_text=markdown_text,
         error_message=None,
     )
 
