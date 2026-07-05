@@ -1,82 +1,108 @@
 # Ревью проекта recap — индекс
 
-Последний запуск: **2026-07-02** ([снапшот](reviews/2026-07-02.md)). Статусы и решения — в
+Последний запуск: **2026-07-05** ([снапшот](reviews/2026-07-05.md); предыдущий —
+[2026-07-02](reviews/2026-07-02.md), все его 40 issue закрыты). Статусы и решения — в
 [roadmap.md](roadmap.md) (единственный источник статусов; файлы issue статус не несут).
 
-## Сводка
+## Сводка (открытые issue запуска 2026-07-05)
 
 | Severity | Кол-во |
 |----------|--------|
 | critical | 0 |
-| high     | 8 |
-| medium   | 17 |
-| low      | 15 |
-| **всего** | **40** |
+| high     | 2 |
+| medium   | 13 |
+| low      | 17 |
+| **всего** | **32** |
 
-Инструментальные проверки на дату запуска: ruff — чисто, mypy — чисто, pytest — 298 passed.
+Инструментальные проверки на дату запуска: ruff/mypy — чисто; **pytest — 1 failed** (SEC-005),
+349 passed; npm lint/test/build — зелёные; cargo check/clippy — чисто; npm audit — 0.
 
 ## Начать отсюда (severity × effort)
 
-1. [SEC-001](issues/SEC-001.md) — живой API-ключ в открытом виде в `config.yaml` → **ротировать сегодня**
-2. [REL-001](issues/REL-001.md) — `UnicodeDecodeError` роняет summarize сырым трейсбэком
-3. [REL-004](issues/REL-004.md) — десктоп отклоняет `.mp4`, реальный формат записей пользователя
-4. [ARCH-002](issues/ARCH-002.md) — отмена в десктопе: kill вместо контракта, потеря истории/транскрипта
-5. [AGENT-002](issues/AGENT-002.md) + [AGENT-006](issues/AGENT-006.md) — обновить CLAUDE.md/AGENTS.md (desktop-слой + правило честной верификации)
-6. [ARCH-001](issues/ARCH-001.md) — дублированный пайплайн cli.py ↔ workflows.py (самая дорогая структурная проблема)
+1. [SEC-005](issues/SEC-005.md) — pytest печатает живой API-ключ из env, сьют красный при
+   документированной настройке → **conftest-скраббер + ротация ключа сегодня**
+2. [AGENT-009](issues/AGENT-009.md) — AGENTS.md активно запрещает существующую унификацию CLI:
+   следующий агент может «починить» код назад
+3. [ARCH-006](issues/ARCH-006.md) — round-trip render↔parse ломается на `\n` в элементе списка —
+   тихая порча саммари при «Сохранить»/экспорте (репро в issue)
+4. [CODE-008](issues/CODE-008.md) — регрессия: duration-probe удалён, прогресс транскрибации
+   снова молчит на видео-входах пользователя
+5. [REL-009](issues/REL-009.md) + [SEC-006](issues/SEC-006.md) — сетевые загрузки: Ollama-pull
+   виснет навсегда без таймаута; CUDA-wheels без sha256
+6. Пакет AGENT-010…013 — память/чеклист/QA-долг: дешёвые правки, убирающие ложную карту среды
 
 ## Issue по категориям
 
 ### Архитектура (ARCH)
-- **high** [ARCH-001](issues/ARCH-001.md) — пайплайн продублирован cli.py ↔ workflows.py, поведение уже расходится
-- **high** [ARCH-002](issues/ARCH-002.md) — отмена: kill процесса вместо кооперативной; мёртвый CancelCheck
-- medium [ARCH-003](issues/ARCH-003.md) — `output_formats` — мёртвый вход контракта
-- medium [ARCH-004](issues/ARCH-004.md) — stderr моста в null: технических логов не существует
+- medium [ARCH-005](issues/ARCH-005.md) — resummarize игнорирует cancel_flag: «Остановить» не работает в режимах суммаризации
+- medium [ARCH-006](issues/ARCH-006.md) — round-trip render↔parse не точен (`\n` в элементе списка)
 
 ### Качество кода (CODE)
-- medium [CODE-001](issues/CODE-001.md) — хардкод путей вывода рядом с аудио; молчаливая перезапись
-- medium [CODE-005](issues/CODE-005.md) — test_connection смешивает черновик и сохранённый конфиг
-- low [CODE-002](issues/CODE-002.md), [CODE-003](issues/CODE-003.md), [CODE-004](issues/CODE-004.md), [CODE-006](issues/CODE-006.md), [CODE-007](issues/CODE-007.md)
+- medium [CODE-008](issues/CODE-008.md) — регрессия duration-probe: прогресс молчит при duration=0
+- low [CODE-009](issues/CODE-009.md) — SUMMARY_JSON_SCHEMA — мёртвый код
+- low [CODE-010](issues/CODE-010.md) — мок bridge.ts: отмена завершается success
+- low [CODE-011](issues/CODE-011.md) — serve() дублирует обвязку _streaming()
+- low [CODE-012](issues/CODE-012.md) — stepsForStatus красит не те шаги (hypothesis)
 
 ### Зависимости (DEP)
-- medium [DEP-001](issues/DEP-001.md) — ESLint 8 EOL; medium [DEP-003](issues/DEP-003.md) — безусловные CUDA-wheels
-- low [DEP-002](issues/DEP-002.md), [DEP-004](issues/DEP-004.md)
+- low [DEP-005](issues/DEP-005.md) — пины CUDA: `>=` в pyproject против `==` в cuda_support
+- low [DEP-006](issues/DEP-006.md) — PyInstaller не задекларирован и не запинен
 
 ### Надёжность (REL)
-- **high** [REL-001](issues/REL-001.md) — UnicodeDecodeError мимо error boundary
-- **high** [REL-004](issues/REL-004.md) — десктоп отклоняет .mp4
-- medium [REL-002](issues/REL-002.md) — ffmpeg без -nostdin/timeout; medium [REL-003](issues/REL-003.md) — мигающая консоль (hypothesis)
-- low [REL-005](issues/REL-005.md), [REL-006](issues/REL-006.md), [REL-007](issues/REL-007.md), [REL-008](issues/REL-008.md)
+- medium [REL-009](issues/REL-009.md) — Ollama-pull: timeout=None, вечное зависание, глухая отмена
+- medium [REL-010](issues/REL-010.md) — CUDA-загрузка не смотрит на реальное GPU (2 ГБ впустую / тихий CPU)
+- low [REL-011](issues/REL-011.md) — портативный ffmpeg вне зоны поиска моста
+- low [REL-012](issues/REL-012.md) — UTF-8-фикс не покрывает stdin
+- low [REL-013](issues/REL-013.md) — экспорт падает целиком на битом .json
+- low [REL-014](issues/REL-014.md) — ротация лога при живом worker (hypothesis)
 
 ### Безопасность (SEC)
-- **high** [SEC-001](issues/SEC-001.md) — живой API-ключ в config.yaml (не в git — проверено)
-- medium [SEC-002](issues/SEC-002.md) — CSP null; medium [SEC-003](issues/SEC-003.md) — нескоуплённые файловые IPC; medium [SEC-004](issues/SEC-004.md) — скрытый env-fallback ключа (hypothesis)
+- **high** [SEC-005](issues/SEC-005.md) — живой ключ в выводе pytest; сьют не изолирован от env
+- medium [SEC-006](issues/SEC-006.md) — CUDA-wheels без sha256-верификации
+- medium [SEC-007](issues/SEC-007.md) — нескоуплённая запись из webview (save_summary, traversal в export)
+- low [SEC-008](issues/SEC-008.md) — zip-slip в _extract_dlls
+- low [SEC-009](issues/SEC-009.md) — pull_model доверяет base_url из webview (SSRF)
 
 ### Производительность (PERF)
-- medium [PERF-001](issues/PERF-001.md) — перезагрузка Whisper-модели на каждый запуск
-- low [PERF-002](issues/PERF-002.md) — последовательные чанки
+- low [PERF-003](issues/PERF-003.md) — распаковка CUDA: DLL целиком в RAM, cancel не опрашивается
 
 ### Конвенции (CONV)
-- low [CONV-001](issues/CONV-001.md) — устаревший known-first-party в ruff
+- low [CONV-002](issues/CONV-002.md) — known-first-party дрейфует второй раз — удалить список
 
 ### Документация (DOC)
-- medium [DOC-001](issues/DOC-001.md) — контракт моста без 4 реализованных команд
-- low [DOC-002](issues/DOC-002.md) — README без упоминания десктопа
+- medium [DOC-003](issues/DOC-003.md) — контракт моста снова отстал (download, 3 команды)
+- medium [DOC-004](issues/DOC-004.md) — lecture/расширения/portable невидимы в README и `--help`
+- low [DOC-005](issues/DOC-005.md) — доковая пыль (шапка spec, «338 tests», step-комментарий)
 
 ### Агентская система (AGENT)
-- **high** [AGENT-001](issues/AGENT-001.md) — скилл project-review без references/assets, 3 копии
-- **high** [AGENT-002](issues/AGENT-002.md) — CLAUDE.md/AGENTS.md устарели (desktop-слой невидим)
-- **high** [AGENT-006](issues/AGENT-006.md) — ложная верификация; правила нет в checked-in файлах
-- medium [AGENT-003](issues/AGENT-003.md), [AGENT-004](issues/AGENT-004.md), [AGENT-005](issues/AGENT-005.md), [AGENT-007](issues/AGENT-007.md)
-- low [AGENT-008](issues/AGENT-008.md)
+- **high** [AGENT-009](issues/AGENT-009.md) — AGENTS.md материально ложен (запрещает существующую унификацию)
+- medium [AGENT-010](issues/AGENT-010.md) — память desktop-tauri-mvp.md противоречит коду
+- medium [AGENT-011](issues/AGENT-011.md) — runtime-знание заперто в памяти; AGENTS.md утверждает обратное
+- medium [AGENT-012](issues/AGENT-012.md) — checklist-документ — завершённое ТЗ под видом живого
+- medium [AGENT-013](issues/AGENT-013.md) — долг ручной Windows-QA нигде не накапливается
+- low [AGENT-014](issues/AGENT-014.md) — allowlist не версионируется вопреки замыслу
+- low [AGENT-015](issues/AGENT-015.md) — allow-паттерны и составные вызовы (hypothesis)
 
 ## Сильные стороны
 
-Ревью откалибровано: проект в целом дисциплинированный, находки — про рост, а не про разруху.
+Калибровка: 40 issue первого ревью закрыты за один день с честными отметками верификации; новые
+находки — почти целиком про код последних трёх дней, а не про разрушение старого.
 
-1. **Атомарные записи — реально везде.** Все персистентные записи в CLI/workflows/bridge идут через `write_text_atomic` (`src/utils.py:7`); `Path.write_text` в продакшен-путях отсутствует.
-2. **Инвариант «транскрипт до LLM» доведён до конца.** `run_one_file` сохраняет транскрипт до суммаризации, `partial_success` доходит до UI-баннера «Повторить суммаризацию», `resummarize_one` переиспользует транскрипт с диска — длинные встречи не транскрибируются повторно.
-3. **Гигиена секретов в десктопе по контракту.** Ключи только в OS-keychain (`secrets_store.py`), наружу — только маскированный boolean; из YAML ключ вычищается перед записью; история хранит только пути/метаданные. `config.yaml` и записи встреч в `data/` не закоммичены (история git проверена).
-4. **Rust-слой сознательно «тупой».** 12 тонких Tauri-команд поверх юнит-тестированного Python-моста; единая точка интеграции `getBridge()` с browser-моком — весь UI демонстрируется без Rust и GPU.
-5. **Строгая валидация конфига с отличными ошибками.** Неизвестные ключи отклоняются с точным dotted-path; настройки из UI прогоняются через `Settings.load` перед сохранением.
-6. **Тесты пропорциональны и уважают границы.** ~4,000 строк тестов на ~2,500 строк src; integration мокает только фабрику; ruff/mypy/pytest — зелёные. Бонус: системный промпт содержит защиту от prompt-injection в `<transcript>`.
-7. **Дисциплина делегирования.** Desktop MVP делался по заранее написанным спекам с явными критериями приёмки; баг-репорты пользователя — точные file:line. Auto-memory честно фиксирует, что НЕ было проверено.
+1. **Контур review → roadmap → burndown замкнут и работает.** Все 40 прежних issue доведены до
+   `done` с датированными отметками и журналом решений; статусы принадлежат человеку.
+2. **Правило честной верификации соблюдается делом.** Коммит `24964d9` прямо пишет «UNVERIFIED
+   scaffolding… The first Windows run is the real integration test»; roadmap фиксирует
+   «drag-in-app вручную не проверял». Нарушений AGENTS.md после 02.07 не найдено (uv — ни разу,
+   git — только по запросу).
+3. **Новые сетевые модули изолированы правильно.** `cuda_support`/`ollama_support` — pure stdlib,
+   без импортов providers/config, подключаются лениво; `recap --help` по-прежнему мгновенный;
+   дизайн «сентинел последним» в CUDA-кэше корректно переживает kill/cancel/переполнение диска.
+4. **Гигиена секретов в коде держится.** `_settings_to_dict` — только маска; `save_settings`
+   вычищает ключ; история — только пути; XSS в экспортном HTML нет (`html.escape` везде).
+   (Единственная утечка — через тестовый вывод, SEC-005, источник вне продакшен-кода.)
+5. **Инварианты прошлого ревью не разрушены.** Атомарные записи + межпроцессный лок истории;
+   кооперативная отмена run_recap; worker самозавершается по EOF и убивается на Exit;
+   partial_success-контракт цел; integration-тесты мокают только фабрику.
+6. **Практика handoff-промпта.** Сформулированная агентом постановка проблемы (симптом, путь
+   события, отработанные гипотезы) позволила свежей сессии решить многоитерационный баг с
+   первого захода — кандидат в повторяемую практику.

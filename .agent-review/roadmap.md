@@ -12,6 +12,38 @@
 
 | ID | Название | Severity | Effort | Статус | Отметки |
 |----|----------|----------|--------|--------|---------|
+| [SEC-005](issues/SEC-005.md) | Тесты не изолированы от RECAP_*-env: сьют красный, живой ключ в выводе pytest | high | quick-win | proposed | ревью 2026-07-05; ключ засвечен в логах — ротировать |
+| [AGENT-009](issues/AGENT-009.md) | AGENTS.md ложен: запрещает существующую унификацию CLI↔workflows, карта без 2 модулей | high | quick-win | proposed | ревью 2026-07-05; рецидив AGENT-002 |
+| [ARCH-006](issues/ARCH-006.md) | Round-trip render↔parse не точен: \n в элементе списка портит блоки при save/export | medium | quick-win | proposed | ревью 2026-07-05; воспроизведено скриптом |
+| [CODE-008](issues/CODE-008.md) | Регрессия: da9d474 удалил duration-probe из 3dd5381 — прогресс молчит при duration=0 | medium | quick-win | proposed | ревью 2026-07-05; реальный вход пользователя |
+| [REL-009](issues/REL-009.md) | Ollama pull: timeout=None — вечное зависание, cancel не срабатывает | medium | quick-win | proposed | ревью 2026-07-05 |
+| [SEC-006](issues/SEC-006.md) | CUDA-wheels скачиваются без проверки sha256 | medium | quick-win | proposed | ревью 2026-07-05 |
+| [AGENT-010](issues/AGENT-010.md) | Память desktop-tauri-mvp.md противоречит текущей архитектуре | medium | quick-win | proposed | ревью 2026-07-05 |
+| [AGENT-011](issues/AGENT-011.md) | Runtime-знание (лог моста, запуск из WSL) заперто в памяти; AGENTS.md утверждает обратное | medium | quick-win | proposed | ревью 2026-07-05 |
+| [AGENT-012](issues/AGENT-012.md) | desktop-agent-checklist.md — завершённое ТЗ под видом живого чеклиста | medium | quick-win | proposed | ревью 2026-07-05 |
+| [ARCH-005](issues/ARCH-005.md) | resummarize игнорирует cancel_flag — «Остановить» не работает в режимах суммаризации | medium | small | proposed | ревью 2026-07-05 |
+| [REL-010](issues/REL-010.md) | _ensure_cuda не смотрит на реальное GPU: без NVIDIA ~2 ГБ впустую + падение; auto — тихий CPU | medium | small | proposed | ревью 2026-07-05; auto-часть — hypothesis |
+| [SEC-007](issues/SEC-007.md) | save_summary/export_summary: нескоуплённая запись из webview (traversal через base_name) | medium | small | proposed | ревью 2026-07-05; асимметрия с SEC-003 |
+| [DOC-003](issues/DOC-003.md) | Контракт моста снова отстал: нет download-шага и 3 команд | medium | small | proposed | ревью 2026-07-05; рецидив DOC-001 |
+| [DOC-004](issues/DOC-004.md) | README/CLI-help/spec не знают про lecture, новые расширения, portable | medium | small | proposed | ревью 2026-07-05 |
+| [AGENT-013](issues/AGENT-013.md) | Долг ручной Windows-QA нигде не накапливается | medium | small | proposed | ревью 2026-07-05 |
+| [SEC-008](issues/SEC-008.md) | Zip-slip в _extract_dlls | low | quick-win | proposed | ревью 2026-07-05; фиксить вместе с SEC-006 |
+| [SEC-009](issues/SEC-009.md) | pull_model доверяет base_url из webview (SSRF) | low | quick-win | proposed | ревью 2026-07-05 |
+| [REL-011](issues/REL-011.md) | Портативный ffmpeg.exe не находится мостом без ручного PATH | low | quick-win | proposed | ревью 2026-07-05 |
+| [REL-012](issues/REL-012.md) | _force_utf8_io не переконфигурирует stdin | low | quick-win | proposed | ревью 2026-07-05 |
+| [REL-013](issues/REL-013.md) | export_summary падает целиком на битом .json вместо фолбэка на Markdown | low | quick-win | proposed | ревью 2026-07-05 |
+| [CODE-009](issues/CODE-009.md) | SUMMARY_JSON_SCHEMA — мёртвый код (реально шлётся только json_object) | low | quick-win | proposed | ревью 2026-07-05 |
+| [CODE-010](issues/CODE-010.md) | Мок bridge.ts: после cancelRun запуск всё равно success | low | quick-win | proposed | ревью 2026-07-05 |
+| [CODE-011](issues/CODE-011.md) | serve() дублирует стриминг-обвязку _streaming() | low | quick-win | proposed | ревью 2026-07-05 |
+| [PERF-003](issues/PERF-003.md) | Распаковка CUDA: DLL целиком в память, cancel не опрашивается | low | quick-win | proposed | ревью 2026-07-05 |
+| [DEP-005](issues/DEP-005.md) | Пины CUDA: pyproject >= vs cuda_support == — дрейф при обновлении lock | low | quick-win | proposed | ревью 2026-07-05 |
+| [DEP-006](issues/DEP-006.md) | PyInstaller не задекларирован и не запинен | low | quick-win | proposed | ревью 2026-07-05 |
+| [CONV-002](issues/CONV-002.md) | ruff known-first-party отстал снова (3 новых модуля) — удалить список | low | quick-win | proposed | ревью 2026-07-05; рецидив CONV-001 |
+| [DOC-005](issues/DOC-005.md) | Доковая пыль: шапка spec противоречит телу; «338 tests»; step-комментарий | low | quick-win | proposed | ревью 2026-07-05 |
+| [AGENT-014](issues/AGENT-014.md) | Allowlist только в settings.local.json; общий settings.json не создан | low | quick-win | proposed | ревью 2026-07-05 |
+| [AGENT-015](issues/AGENT-015.md) | Относительные allow-паттерны могут не покрывать составные вызовы | low | quick-win | proposed | ревью 2026-07-05; hypothesis |
+| [REL-014](issues/REL-014.md) | Ротация recap-bridge.log ломается при живом worker (Windows) | low | small | proposed | ревью 2026-07-05; hypothesis |
+| [CODE-012](issues/CODE-012.md) | stepsForStatus красит не те шаги для не-full режимов истории | low | small | proposed | ревью 2026-07-05; hypothesis |
 | [SEC-001](issues/SEC-001.md) | Живой API-ключ в открытом виде в config.yaml | high | quick-win | done | 2026-07-02: ключ убран из config.yaml, старый ротирован, ключ через env |
 | [REL-001](issues/REL-001.md) | UnicodeDecodeError не перехватывается при чтении транскрипта | high | quick-win | done | 2026-07-02: ловим (OSError, UnicodeDecodeError) в cli.py+workflows.py; тесты на оба пути |
 | [REL-004](issues/REL-004.md) | Десктоп отклоняет .mp4 — реальный формат пользователя | high | quick-win | done | 2026-07-02: общая AUDIO_EXTENSIONS (+mp4/mkv/webm/flac), синк bridge.ts; drag-in-app вручную не проверял |
