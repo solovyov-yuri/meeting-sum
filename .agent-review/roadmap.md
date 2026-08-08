@@ -25,17 +25,17 @@
 | [ARCH-005](issues/ARCH-005.md) | resummarize игнорирует cancel_flag — «Остановить» не работает в режимах суммаризации | medium | small | done | 2026-08-08: cancel проброшен в resummarize_one + опрос после ответа LLM; в app не проверено |
 | [REL-010](issues/REL-010.md) | _ensure_cuda не смотрит на реальное GPU: без NVIDIA ~2 ГБ впустую + падение; auto — тихий CPU | medium | small | done | 2026-08-08: детекция через драйвер (ctypes) до загрузки; ветка «нет карты» проверена только моками |
 | [SEC-007](issues/SEC-007.md) | save_summary/export_summary: нескоуплённая запись из webview (traversal через base_name) | medium | small | done | 2026-08-08: запись скоуплена по истории, base_name — только имя файла |
-| [DOC-003](issues/DOC-003.md) | Контракт моста снова отстал: нет download-шага и 3 команд | medium | small | proposed | ревью 2026-07-05; рецидив DOC-001 |
+| [DOC-003](issues/DOC-003.md) | Контракт моста снова отстал: нет download-шага и 3 команд | medium | small | done | 2026-08-08: check_model/pull_model добавлены, пример get_settings обновлён; download-шаг и save_summary закрыты попутно |
 | [DOC-004](issues/DOC-004.md) | README/CLI-help/spec не знают про lecture, новые расширения, portable | medium | small | done | 2026-08-08: lecture в --help/README/spec, 8 расширений, ссылка на portable-build |
 | [AGENT-013](issues/AGENT-013.md) | Долг ручной Windows-QA нигде не накапливается | medium | small | done | 2026-08-08: docs/manual-qa-pending.md + правило в AGENTS.md; засеян долгом этого прогона |
 | [SEC-008](issues/SEC-008.md) | Zip-slip в _extract_dlls | low | quick-win | done | 2026-08-08: валидация имени члена до создания файлов; PoC на pre-fix коде подтвердил побег |
 | [SEC-009](issues/SEC-009.md) | pull_model доверяет base_url из webview (SSRF) | low | quick-win | proposed | ревью 2026-07-05 |
 | [REL-011](issues/REL-011.md) | Портативный ffmpeg.exe не находится мостом без ручного PATH | low | quick-win | done | 2026-08-08: поиск на стороне Python (вариант 2) — Rust не трогали, покрыто тестами |
-| [REL-012](issues/REL-012.md) | _force_utf8_io не переконфигурирует stdin | low | quick-win | proposed | ревью 2026-07-05 |
+| [REL-012](issues/REL-012.md) | _force_utf8_io не переконфигурирует stdin | low | quick-win | done | 2026-08-08: stdin в том же цикле + тест на cp1251-поток |
 | [REL-013](issues/REL-013.md) | export_summary падает целиком на битом .json вместо фолбэка на Markdown | low | quick-win | done | 2026-08-08: фолбэк на текст + отказ до записи, если пусты оба источника |
 | [CODE-009](issues/CODE-009.md) | SUMMARY_JSON_SCHEMA — мёртвый код (реально шлётся только json_object) | low | quick-win | done | 2026-08-08: схема прокинута (вариант 1), деградация json_schema → json_object → текст |
 | [CODE-010](issues/CODE-010.md) | Мок bridge.ts: после cancelRun запуск всё равно success | low | quick-win | done | 2026-08-08: cancelled-результат в runRecap и resummarize мока + vitest |
-| [CODE-011](issues/CODE-011.md) | serve() дублирует стриминг-обвязку _streaming() | low | quick-win | proposed | ревью 2026-07-05 |
+| [CODE-011](issues/CODE-011.md) | serve() дублирует стриминг-обвязку _streaming() | low | quick-win | done | 2026-08-08: serve() зовёт _streaming() с transcriber_factory; framing и отмена — общие |
 | [PERF-003](issues/PERF-003.md) | Распаковка CUDA: DLL целиком в память, cancel не опрашивается | low | quick-win | done | 2026-08-08: copyfileobj + опрос cancel между членами (тот же коммит, что SEC-008) |
 | [DEP-005](issues/DEP-005.md) | Пины CUDA: pyproject >= vs cuda_support == — дрейф при обновлении lock | low | quick-win | done | 2026-08-08: тест сверки CUDA_PACKAGES с uv.lock (вариант 1) |
 | [DEP-006](issues/DEP-006.md) | PyInstaller не задекларирован и не запинен | low | quick-win | done | 2026-08-08: группа packaging = pyinstaller>=6,<7; скрипт через uv sync --group packaging |
@@ -248,6 +248,11 @@ docs/portable-build.md.
 2026-08-08 — REL-011 — сознательное отклонение от рекомендованного варианта 1 (PATH из Rust) в пользу
 варианта 2 (поиск на стороне Python): покрывается тестами отсюда, не добавляет непроверяемой
 Rust-логики и работает также при прямом запуске recap-bridge.exe.
+
+2026-08-08 — DOC-003 — скоуп пересобран по факту, а не по тексту issue: `download`-шаг добавил агент
+REL-010, `save_summary` — агент SEC-007, отмену resummarize — агент ARCH-005. Реально не хватало двух
+команд (`check_model`, `pull_model`) и устаревшего примера `get_settings` (без `output_dir` и
+`api_keys_configured`, с чужим `max_transcript_chars`).
 
 2026-07-02 — финал. Все 40 issue закрыты. AGENT-003 (импорт подтверждён), AGENT-005 (allowlist через
 /update-config + deny uv), DEP-003 (uv lock выполнен пользователем). Tailwind 4 ждёт визуального обзора
