@@ -824,3 +824,38 @@ def test_configure_logging_writes_file(data_dir: Path) -> None:
 
 def test_read_text_none() -> None:
     assert desktop_bridge.read_text(None) == {"text": None, "exists": False}
+
+
+def test_force_utf8_io_covers_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The payload arrives as UTF-8 JSON; a locale-decoded stdin would mangle a Cyrillic audio_path.
+    import io
+    import sys
+
+    payload = {"audio_path": "C:/Аудио/встреча.mp3"}
+    raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")  # non-ASCII bytes, as Rust sends them
+    stdin = io.TextIOWrapper(io.BytesIO(raw), encoding="cp1251")
+    stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1251")
+    stderr = io.TextIOWrapper(io.BytesIO(), encoding="cp1251")
+    monkeypatch.setattr(sys, "stdin", stdin)
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(sys, "stderr", stderr)
+
+    desktop_bridge._force_utf8_io()
+
+    assert json.loads(sys.stdin.read()) == payload
+    assert sys.stdout.encoding == "utf-8"
+    assert sys.stderr.encoding == "utf-8"
+
+
+def test_force_utf8_io_survives_unreconfigurable_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Already-read stdin refuses the encoding change (io.UnsupportedOperation) — must not crash.
+    import io
+    import sys
+
+    stdin = io.TextIOWrapper(io.BytesIO("привет\nвторая\n".encode()), encoding="utf-8")
+    stdin.readline()
+    monkeypatch.setattr(sys, "stdin", stdin)
+
+    desktop_bridge._force_utf8_io()
+
+    assert sys.stdin.readline() == "вторая\n"

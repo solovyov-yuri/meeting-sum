@@ -45,13 +45,16 @@ DESKTOP_SUMMARY_FORMAT = "plain"
 
 
 def _force_utf8_io() -> None:
-    """Make stdout/stderr UTF-8 regardless of the OS locale.
+    """Make stdin/stdout/stderr UTF-8 regardless of the OS locale.
 
     Belt-and-suspenders alongside the Rust shell's ``PYTHONUTF8=1``: on Windows a piped stdout/stderr
     otherwise defaults to cp1252, and writing Cyrillic/CJK (the JSON result, streamed LLM tokens)
-    crashes with "'charmap' codec can't encode". Covers direct/CLI invocation where the env is unset.
+    crashes with "'charmap' codec can't encode". The incoming payload is UTF-8 JSON too, so stdin gets
+    the same treatment — a locale-decoded stdin turns a Cyrillic ``audio_path`` into mojibake (cp1251)
+    or fails to decode at all (cp1252). Covers direct/CLI invocation where the env is unset. Must run
+    before the first read: ``reconfigure`` refuses to change the encoding of an already-read stream.
     """
-    for stream in (sys.stdout, sys.stderr):
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is not None:
             try:
