@@ -49,9 +49,6 @@ src = ["src"]
 select = ["E", "F", "I", "W", "UP"]
 ignore = ["E501"]
 
-[tool.ruff.lint.isort]
-known-first-party = ["cli", "config", "desktop_bridge", "formatters", "models", "preprocessing", "prompts", "providers", "secrets_store", "transcript", "utils", "workflows"]
-
 [tool.mypy]
 python_version = "3.12"
 files = ["src"]
