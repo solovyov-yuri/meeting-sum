@@ -10,11 +10,20 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 ProgressCallback = Callable[[int, int, str], None]  # (completed_bytes, total_bytes, status)
 CancelCheck = Callable[[], bool]
+
+#: Socket timeout for the streaming pull: it caps connecting and each individual read, and every
+#: read that returns data resets it. It is deliberately *not* a cap on the total pull duration —
+#: a multi-gigabyte download may run for hours as long as bytes keep arriving. It only bounds how
+#: long we wait on a silent socket (stalled registry, half-open TCP, machine sleep), which is also
+#: the worst-case latency of a cancel while nothing is arriving. Ollama emits status lines
+#: continuously while downloading, but can stay quiet during digest verification of a big model,
+#: so keep this generous.
+PULL_IDLE_TIMEOUT = 300.0
 
 
 class PullCancelled(Exception):
@@ -26,7 +35,7 @@ def _native_base(base_url: str) -> str:
     return base_url.rstrip("/").removesuffix("/v1")
 
 
-def _post(base_url: str, path: str, body: dict, timeout: float | None) -> Any:
+def _post(base_url: str, path: str, body: dict, timeout: float) -> Any:
     url = f"{_native_base(base_url)}{path}"
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
@@ -44,6 +53,25 @@ def model_installed(base_url: str, model: str) -> bool:
         raise
 
 
+def _iter_lines(resp: Any, cancel: CancelCheck | None) -> Iterator[bytes]:
+    """Iterate the streamed response lines, turning a stalled read into a cancel when one is pending.
+
+    A socket timeout is terminal for the connection (the reader refuses further reads), so the read
+    cannot be retried after polling ``cancel`` — the poll happens once, on the way out.
+    """
+    lines = iter(resp)
+    while True:
+        try:
+            line = next(lines)
+        except StopIteration:
+            return
+        except TimeoutError as exc:
+            if cancel and cancel():
+                raise PullCancelled from exc
+            raise
+        yield line
+
+
 def pull_model(
     base_url: str,
     model: str,
@@ -52,12 +80,17 @@ def pull_model(
 ) -> None:
     """Pull ``model`` via Ollama's streaming ``/api/pull``, reporting per-layer byte progress.
 
-    Polls ``cancel`` between lines and raises ``PullCancelled`` if set. Note: Ollama keeps pulling
-    server-side after the client disconnects, so a cancelled pull may still finish (and be cached).
+    Polls ``cancel`` between lines and raises ``PullCancelled`` if set. A silent socket can only
+    block for ``PULL_IDLE_TIMEOUT`` (see there): the read then fails, and a pending cancel is
+    honoured as ``PullCancelled`` while anything else propagates to the caller's error boundary.
+    Note: Ollama keeps pulling server-side after the client disconnects, so a cancelled pull may
+    still finish (and be cached).
     """
-    resp = _post(base_url, "/api/pull", {"name": model, "stream": True}, timeout=None)
+    if cancel and cancel():  # honour an immediate cancel before touching the network
+        raise PullCancelled
+    resp = _post(base_url, "/api/pull", {"name": model, "stream": True}, timeout=PULL_IDLE_TIMEOUT)
     with resp:
-        for raw in resp:
+        for raw in _iter_lines(resp, cancel):
             if cancel and cancel():
                 raise PullCancelled
             line = raw.strip()

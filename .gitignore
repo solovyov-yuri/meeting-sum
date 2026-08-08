@@ -19,6 +19,8 @@ data/*
 
 # Local config (contains secrets / personal paths)
 config.yaml
-# Ignore only machine-local Claude settings; a shared .claude/settings.json (and any
-# project skills) can be versioned. The project-review skill itself lives globally (AGENT-001).
+# Ignore only machine-local Claude settings. Permissions (the command allowlist and the deny on
+# `uv`, which corrupts the Windows venv) deliberately live in that local file, not in a shared
+# settings.json — so a fresh clone starts with no inherited permissions. Project skills, if any,
+# can still be versioned here; the project-review skill itself lives globally.
 .claude/settings.local.json

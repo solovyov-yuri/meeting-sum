@@ -82,18 +82,29 @@ function nowTime(): string {
   return new Date().toLocaleTimeString("ru-RU", { hour12: false });
 }
 
-function stepsForStatus(status: RunStatus): Record<StepName, StepState> {
+// A history entry records only a terminal status, with no per-step trace. Pin that status to a step
+// the mode actually shows: a summarize-only run has no "transcribe" ring to carry the error, so it
+// falls back to the mode's nearest earlier step (or its first one).
+function terminalStep(runMode: RunMode, preferred: StepName): StepName {
+  const steps = MODE_STEPS[runMode];
+  const limit = STEP_ORDER.indexOf(preferred);
+  const upToPreferred = steps.filter((step) => STEP_ORDER.indexOf(step) <= limit);
+  return upToPreferred.length > 0 ? upToPreferred[upToPreferred.length - 1] : steps[0];
+}
+
+function stepsForStatus(status: RunStatus, runMode: RunMode): Record<StepName, StepState> {
   const s = initialSteps();
   if (status === "success") {
     return { ...s, preprocess: ok, transcribe: ok, summarize: ok, export: ok };
   }
   if (status === "partial_success") {
-    return { ...s, transcribe: ok, summarize: { status: "error", percent: null } };
+    return { ...s, transcribe: ok, [terminalStep(runMode, "summarize")]: { status: "error", percent: null } };
   }
+  const failedStep = terminalStep(runMode, "transcribe");
   if (status === "failed") {
-    return { ...s, transcribe: { status: "error", percent: null } };
+    return { ...s, [failedStep]: { status: "error", percent: null } };
   }
-  return { ...s, transcribe: { status: "cancelled", percent: null } };
+  return { ...s, [failedStep]: { status: "cancelled", percent: null } };
 }
 
 const ok: StepState = { status: "success", percent: null };
@@ -392,11 +403,12 @@ export function useRecap() {
       bridge.readText(item.transcript_path),
       bridge.readText(item.summary_path),
     ]);
+    const mode = item.run_mode ?? "full";
     setActiveHistoryId(item.id);
     setAudioPath(item.audio_path);
-    setRunMode(item.run_mode ?? "full");
+    setRunMode(mode);
     setRunConfig({ provider: item.provider, model: item.model, mode: item.mode });
-    setSteps(stepsForStatus(item.status));
+    setSteps(stepsForStatus(item.status, mode));
     setLogs([
       { id: logCounter.current++, time: nowTime(), status: "success", message: `Открыт запуск: ${item.audio_name}` },
     ]);

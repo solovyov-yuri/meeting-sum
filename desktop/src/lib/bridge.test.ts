@@ -31,6 +31,28 @@ describe("browser bridge (mock)", () => {
     expect(reopened.exists).toBe(true);
   });
 
+  it("ends a cancelled run as cancelled and files it in history", async () => {
+    const bridge = await getBridge();
+    vi.useRealTimers();
+
+    const run = bridge.runRecap(
+      {
+        audio_path: "C:/meetings/stopped.mp3",
+        overrides: { provider: "ollama", mode: "medium" },
+      },
+      () => {},
+    );
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await bridge.cancelRun();
+    const result = await run;
+
+    expect(result.status).toBe("cancelled");
+    expect(result.summary_path).toBeNull();
+
+    const history = await bridge.getHistory();
+    expect(history[0].status).toBe("cancelled");
+  });
+
   it("returns partial_success when an external provider has no key", async () => {
     const bridge = await getBridge();
     const result = await bridge.runRecap(

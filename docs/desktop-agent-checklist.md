@@ -1,95 +1,59 @@
-# Чеклист для агента: desktop MVP
+# Чеклист: перед сдачей desktop-изменения
 
-## 1. Перед началом
+Живой документ. Не описание задачи, а то, что должно быть сделано **до** слов «готово» по любому
+изменению, затрагивающему десктоп (Python-мост, Rust-оболочка, React-UI).
 
-- Прочитать `AGENTS.md`.
-- Прочитать это ТЗ:
-  - `docs/desktop-tauri-spec.md`;
-  - `docs/desktop-ux.md`;
-  - `docs/desktop-bridge-contract.md`.
-- Проверить текущий `src/config.py`, `src/cli.py`, `src/providers/factory.py`, `src/preprocessing.py`.
-- Не делать git commit/branch без явной просьбы пользователя.
+## 1. Автоматические проверки
 
-## 2. Backend work
+Всё это запускается из WSL (`uv` не запускать — он ломает Windows-venv):
 
-- Вынести reusable workflow из `src/cli.py` в `src/workflows.py`.
-- Сохранить CLI behavior.
-- Добавить structured progress events.
-- Реализовать partial success: transcript сохранен, LLM failed.
-- Добавить bridge-friendly facade.
-- Не писать secrets в config.
-- Не ломать strict config validation.
-- Все записи делать через `write_text_atomic()`.
-
-## 3. Frontend work
-
-- Создать Tauri app.
-- Реализовать layout:
-  - sidebar;
-  - main workspace;
-  - inspector.
-- Сделать русский UI.
-- Реализовать выбор файла и drag-and-drop.
-- Реализовать run flow.
-- Реализовать tabs:
-  - transcript;
-  - summary;
-  - log.
-- Summary editable.
-- Transcript readonly.
-- Реализовать Settings sections.
-- Реализовать History JSON list.
-- Реализовать export/copy/open folder.
-- Реализовать error states.
-
-## 4. UX acceptance
-
-- Нет landing page.
-- Нет marketing hero.
-- Нет nested cards.
-- Нет декоративных gradients/orbs/blobs.
-- UI помещается на desktop viewport без overlap.
-- Кнопки и controls имеют понятные disabled/loading states.
-- Ошибки написаны по-русски.
-- API key masked.
-
-## 5. Manual QA
-
-- Запуск приложения.
-- Выбор audio file.
-- Успешный run на коротком файле или mock provider.
-- LLM failure показывает partial success.
-- Summary редактируется.
-- Copy работает.
-- Export создает Telegram/plain/JSON.
-- History обновляется.
-- Settings сохраняются.
-- API key сохраняется и удаляется.
-- CLI команды продолжают работать.
-
-## 6. Automated checks
-
-Python:
-
-```powershell
-.venv\Scripts\pytest.exe -v
-.venv\Scripts\ruff.exe check src/
-.venv\Scripts\mypy.exe src/
+```bash
+.venv/Scripts/pytest.exe -q
+.venv/Scripts/ruff.exe check src/ tests/
+.venv/Scripts/mypy.exe src/
 ```
 
-Frontend, если добавлен:
+Фронт, если тронут (`desktop/`):
 
-```powershell
-npm run lint
-npm run test
-npm run build
+```bash
+npm run lint && npm run test && npm run build
 ```
 
-Tauri:
+Rust, если тронут (`desktop/src-tauri/`) — компиляция проверяема отсюда, ~5 с:
 
-```powershell
-npm run tauri dev
-npm run tauri build
+```bash
+/mnt/c/Users/solov/.cargo/bin/cargo.exe check
+/mnt/c/Users/solov/.cargo/bin/cargo.exe clippy
 ```
 
-Если какая-то проверка не может быть выполнена локально, агент должен явно указать причину.
+## 2. Отсюда не проверяется
+
+`npm run tauri dev|build`, запуск GUI, CUDA-транскрибация, живой LLM-эндпоинт, живой Ollama.
+Это не повод молчать: перечислите, что проверили и что осталось, и **допишите строку в**
+[`manual-qa-pending.md`](manual-qa-pending.md) — иначе долг ручной проверки теряется.
+
+Сам пайплайн (без GPU и без GUI) отсюда воспроизводим — см. «Desktop runtime debugging» в
+`AGENTS.md`; там же путь к логу моста, который стоит читать первым.
+
+## 3. Согласованность контрактов
+
+- Поведение, описанное в `AGENTS.md`, `docs/desktop-bridge-contract.md`,
+  `docs/desktop-tauri-spec.md` или README, правится **тем же изменением**.
+- Мок в `desktop/src/lib/bridge.ts` должен отдавать те же статусы результата, что настоящий мост:
+  это повторяющийся источник расхождений (`success` вместо `cancelled` и т.п.).
+- Формы саммари: десктоп пишет/правит plain text, CLI — Markdown; каждый round-trip
+  render↔parse обязан оставаться точным.
+
+## 4. UI-требования (проверяются глазами при первом же запуске)
+
+- Нет landing page, marketing hero, вложенных карточек, декоративных градиентов.
+- UI помещается в desktop viewport без перекрытий.
+- У кнопок и контролов внятные disabled/loading-состояния.
+- Ошибки — по-русски. API-ключ — только маской.
+
+## 5. Ручной прогон на Windows (за пользователем)
+
+Полный сценарий, когда изменение того заслуживает: запуск приложения → выбор аудио → успешный
+прогон на коротком файле → отказ LLM даёт partial success → редактирование саммари → «Копировать»
+→ экспорт (markdown / plain / HTML / JSON) → история обновилась → настройки и API-ключ
+сохраняются и удаляются → CLI-команды продолжают работать.

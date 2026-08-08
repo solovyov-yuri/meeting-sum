@@ -1,6 +1,8 @@
+import hashlib
 import io
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -72,6 +74,51 @@ def test_extract_dlls_only_takes_bin_dlls(tmp_path: Path) -> None:
     assert not (dest / "nvidia/cublas/include/foo.h").exists()
 
 
+@pytest.mark.parametrize("member", ["nvidia/../../evil/bin/x.dll", "nvidia/..\\..\\evil/bin/x.dll"])
+def test_extract_dlls_refuses_members_escaping_dest(tmp_path: Path, member: str) -> None:
+    # A crafted wheel must not be able to write outside `dest` — neither via `..` segments nor via
+    # backslash separators (which pathlib treats as separators on Windows). Nothing outside `dest`
+    # may be created, not even the directory the member would have needed.
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(member, b"EVIL")
+    whl = tmp_path / "pkg.whl"
+    whl.write_bytes(buf.getvalue())
+
+    dest = tmp_path / "a" / "b" / "out"
+    dest.mkdir(parents=True)
+    with pytest.raises(RuntimeError, match="Недопустимый путь"):
+        cuda_support._extract_dlls(whl, dest)
+
+    assert list(tmp_path.rglob("*.dll")) == []  # nothing anywhere under the temp tree
+    assert not (dest / "nvidia").exists()  # the refusal must precede mkdir(), not follow it
+
+
+def test_extract_dlls_polls_cancel_between_members(tmp_path: Path) -> None:
+    # Cancelling during the unpack phase must surface as DownloadCancelled and stop mid-wheel, so
+    # the poll has to happen between members, not only once on entry.
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("nvidia/cublas/bin/one.dll", b"DLL")
+        zf.writestr("nvidia/cublas/bin/two.dll", b"DLL")
+    whl = tmp_path / "pkg.whl"
+    whl.write_bytes(buf.getvalue())
+
+    calls = {"n": 0}
+
+    def check_cancel() -> None:
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise cuda_support.DownloadCancelled
+
+    dest = tmp_path / "out"
+    with pytest.raises(cuda_support.DownloadCancelled):
+        cuda_support._extract_dlls(whl, dest, check_cancel)
+
+    assert (dest / "nvidia/cublas/bin/one.dll").is_file()
+    assert not (dest / "nvidia/cublas/bin/two.dll").exists()
+
+
 class _FakeResponse:
     """Minimal urlopen stand-in: a context manager serving `payload` in chunks."""
 
@@ -103,7 +150,11 @@ def test_download_extracts_all_packages_and_marks_complete(monkeypatch: pytest.M
     monkeypatch.setattr(cuda_support.sys, "frozen", True, raising=False)
 
     wheels = {"nvidia-cublas-cu12": _wheel_bytes("cublas", "cublas64_12.dll"), "nvidia-cudnn-cu12": _wheel_bytes("cudnn", "cudnn64_9.dll")}
-    monkeypatch.setattr(cuda_support, "_resolve_win_wheel", lambda pkg, ver: (f"https://example.invalid/{pkg}", len(wheels[pkg])))
+    monkeypatch.setattr(
+        cuda_support,
+        "_resolve_win_wheel",
+        lambda pkg, ver: (f"https://example.invalid/{pkg}", hashlib.sha256(wheels[pkg]).hexdigest(), len(wheels[pkg])),
+    )
     monkeypatch.setattr(cuda_support.urllib.request, "urlopen", lambda url, timeout=0: _FakeResponse(wheels[url.rsplit("/", 1)[1]]))
 
     progress: list[tuple[int, int, str]] = []
@@ -122,7 +173,9 @@ def test_download_cancelled_mid_stream_raises_cancelled(monkeypatch: pytest.Monk
     monkeypatch.setattr(cuda_support.sys, "frozen", True, raising=False)
 
     payload = _wheel_bytes("cublas", "cublas64_12.dll")
-    monkeypatch.setattr(cuda_support, "_resolve_win_wheel", lambda pkg, ver: ("https://example.invalid/w", len(payload)))
+    monkeypatch.setattr(
+        cuda_support, "_resolve_win_wheel", lambda pkg, ver: ("https://example.invalid/w", hashlib.sha256(payload).hexdigest(), len(payload))
+    )
     monkeypatch.setattr(cuda_support.urllib.request, "urlopen", lambda url, timeout=0: _FakeResponse(payload))
 
     calls = {"n": 0}
@@ -136,6 +189,33 @@ def test_download_cancelled_mid_stream_raises_cancelled(monkeypatch: pytest.Monk
     assert cuda_support.is_cuda_installed() is False
 
 
+def test_download_cancelled_during_extract_leaves_no_sentinel(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # Cancelling once the unpack phase has started must also raise DownloadCancelled, and the
+    # completion sentinel must stay absent so the next run re-offers the download.
+    monkeypatch.setenv("RECAP_CUDA_DIR", str(tmp_path / "cuda"))
+    monkeypatch.setattr(cuda_support.sys, "frozen", True, raising=False)
+
+    payload = _wheel_bytes("cublas", "cublas64_12.dll")
+    monkeypatch.setattr(
+        cuda_support, "_resolve_win_wheel", lambda pkg, ver: ("https://example.invalid/w", hashlib.sha256(payload).hexdigest(), len(payload))
+    )
+    monkeypatch.setattr(cuda_support.urllib.request, "urlopen", lambda url, timeout=0: _FakeResponse(payload))
+
+    extracting = {"now": False}
+
+    def on_progress(done: int, total: int, message: str) -> None:
+        if message.startswith("Распаковка"):
+            extracting["now"] = True
+
+    with pytest.raises(cuda_support.DownloadCancelled):
+        cuda_support.download_cuda_libs(on_progress=on_progress, cancel=lambda: extracting["now"])
+
+    # The cancel must land inside the unpack phase — nothing of the wheel may reach the cache dir.
+    assert not (tmp_path / "cuda" / "nvidia/cublas/bin/cublas64_12.dll").exists()
+    assert not cuda_support._sentinel().exists()
+    assert cuda_support.is_cuda_installed() is False
+
+
 def test_download_rejects_a_wheel_without_dlls(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     # A wheel that yields no DLL must fail loudly instead of leaving a "complete" empty cache.
     monkeypatch.setenv("RECAP_CUDA_DIR", str(tmp_path / "cuda"))
@@ -144,9 +224,111 @@ def test_download_rejects_a_wheel_without_dlls(monkeypatch: pytest.MonkeyPatch, 
     empty = io.BytesIO()
     with zipfile.ZipFile(empty, "w") as zf:
         zf.writestr("nvidia_cublas_cu12-1.2.3.dist-info/RECORD", b"record")
-    monkeypatch.setattr(cuda_support, "_resolve_win_wheel", lambda pkg, ver: ("https://example.invalid/w", 0))
-    monkeypatch.setattr(cuda_support.urllib.request, "urlopen", lambda url, timeout=0: _FakeResponse(empty.getvalue()))
+    payload = empty.getvalue()
+    monkeypatch.setattr(
+        cuda_support, "_resolve_win_wheel", lambda pkg, ver: ("https://example.invalid/w", hashlib.sha256(payload).hexdigest(), 0)
+    )
+    monkeypatch.setattr(cuda_support.urllib.request, "urlopen", lambda url, timeout=0: _FakeResponse(payload))
 
     with pytest.raises(RuntimeError, match="не найдено DLL"):
         cuda_support.download_cuda_libs()
     assert cuda_support.is_cuda_installed() is False
+
+
+def test_download_rejects_a_wheel_with_a_wrong_digest(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # Tampered/corrupted bytes: the digest check fires before extraction, so nothing is unpacked and
+    # the completion sentinel stays absent — the next run re-offers the download.
+    monkeypatch.setenv("RECAP_CUDA_DIR", str(tmp_path / "cuda"))
+    monkeypatch.setattr(cuda_support.sys, "frozen", True, raising=False)
+
+    payload = _wheel_bytes("cublas", "cublas64_12.dll")
+    monkeypatch.setattr(cuda_support, "_resolve_win_wheel", lambda pkg, ver: ("https://example.invalid/w", "00" * 32, len(payload)))
+    monkeypatch.setattr(cuda_support.urllib.request, "urlopen", lambda url, timeout=0: _FakeResponse(payload))
+
+    with pytest.raises(RuntimeError, match="Контрольная сумма"):
+        cuda_support.download_cuda_libs()
+
+    assert not cuda_support._sentinel().exists()
+    assert not (cuda_support.cuda_libs_dir() / "nvidia/cublas/bin/cublas64_12.dll").exists()
+    assert cuda_support.is_cuda_installed() is False
+
+
+def test_resolve_win_wheel_requires_a_published_digest(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A PyPI entry without digests must fail loudly instead of downloading unverified DLLs.
+    entry = {"filename": "nvidia_cublas_cu12-1.2.3-py3-none-win_amd64.whl", "url": "https://example.invalid/w", "size": 10, "digests": {}}
+    payload = io.BytesIO(b'{"urls": []}')
+    monkeypatch.setattr(cuda_support.urllib.request, "urlopen", lambda url, timeout=0: _FakeResponse(payload.getvalue()))
+    monkeypatch.setattr(cuda_support.json, "load", lambda resp: {"urls": [entry]})
+
+    with pytest.raises(RuntimeError, match="sha256"):
+        cuda_support._resolve_win_wheel("nvidia-cublas-cu12", "1.2.3")
+
+
+# ── GPU presence detection (runs before the ~2 GB download) ──────────────────────
+# The dev machine here HAS an NVIDIA card, so every case fakes the driver library: the tests must
+# assert on logic, not on the hardware they happen to run on.
+
+
+class _FakeFn:
+    """A ctypes function pointer stand-in: callable, with settable restype/argtypes."""
+
+    def __init__(self, impl):  # type: ignore[no-untyped-def]
+        self._impl = impl
+        self.restype = None
+        self.argtypes = None
+
+    def __call__(self, *args):  # type: ignore[no-untyped-def]
+        return self._impl(*args)
+
+
+def _fake_driver(*, init_rc: int = 0, count_rc: int = 0, count: int = 1, with_count: bool = True):  # type: ignore[no-untyped-def]
+    def _get_count(ptr):  # type: ignore[no-untyped-def]
+        ptr.contents.value = count
+        return count_rc
+
+    driver = SimpleNamespace(cuInit=_FakeFn(lambda _flags: init_rc))
+    if with_count:
+        driver.cuDeviceGetCount = _FakeFn(_get_count)
+    return driver
+
+
+def test_detect_gpu_true_when_driver_reports_a_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cuda_support, "_load_cuda_driver", lambda: _fake_driver(count=2))
+    assert cuda_support.detect_nvidia_gpu() is True
+
+
+def test_detect_gpu_false_without_driver_library(monkeypatch: pytest.MonkeyPatch) -> None:
+    # No nvcuda.dll / libcuda.so → the NVIDIA driver isn't installed → no usable GPU.
+    monkeypatch.setattr(cuda_support, "_load_cuda_driver", lambda: None)
+    assert cuda_support.detect_nvidia_gpu() is False
+
+
+def test_detect_gpu_false_when_cuinit_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cuda_support, "_load_cuda_driver", lambda: _fake_driver(init_rc=100))
+    assert cuda_support.detect_nvidia_gpu() is False
+
+
+def test_detect_gpu_false_when_no_devices(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cuda_support, "_load_cuda_driver", lambda: _fake_driver(count=0))
+    assert cuda_support.detect_nvidia_gpu() is False
+
+
+def test_detect_gpu_undetermined_when_count_call_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cuda_support, "_load_cuda_driver", lambda: _fake_driver(count_rc=3))
+    assert cuda_support.detect_nvidia_gpu() is None
+
+
+def test_detect_gpu_undetermined_when_symbol_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An unexpected driver ABI must yield "don't know" (callers then proceed), never a hard False.
+    monkeypatch.setattr(cuda_support, "_load_cuda_driver", lambda: _fake_driver(with_count=False))
+    assert cuda_support.detect_nvidia_gpu() is None
+
+
+@pytest.mark.parametrize(("value", "expected"), [("1", True), ("yes", True), ("0", False), ("no", False)])
+def test_detect_gpu_env_override_wins(monkeypatch: pytest.MonkeyPatch, value: str, expected: bool) -> None:
+    def _boom():  # type: ignore[no-untyped-def]
+        raise AssertionError("the driver must not be probed when the override is set")
+
+    monkeypatch.setattr(cuda_support, "_load_cuda_driver", _boom)
+    monkeypatch.setenv(cuda_support.GPU_OVERRIDE_ENV, value)
+    assert cuda_support.detect_nvidia_gpu() is expected

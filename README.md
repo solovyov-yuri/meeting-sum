@@ -41,8 +41,8 @@ transcription:
     name: large-v3
 summarization:
   # language: ru               # язык промптов LLM; по умолчанию ru
-  mode: medium                 # brief | medium | detailed
-  max_transcript_chars: 60000  # лимит одного LLM-запроса; длинные транскрипты разбиваются на чанки (chunking_mode: chunk)
+  mode: medium                 # brief | medium | detailed | lecture
+  max_transcript_chars: 42000  # лимит одного LLM-запроса; длинные транскрипты разбиваются на чанки (chunking_mode: chunk)
   model:
     provider: ollama           # openai | xai | ollama | lm-studio | vllm
     name: qwen3.5:latest
@@ -171,6 +171,7 @@ summarization:
 | `brief` | 2–3 предложения, только суть, без структуры |
 | `medium` | Тема + ключевые обсуждения + решения и задачи (по умолчанию) |
 | `detailed` | Полный протокол: участники, ход обсуждения, задачи с ответственными и сроками |
+| `lecture` | Конспект лекции или доклада: разделы с тезисами, определениями и примерами + блок «Главное» |
 
 ### Полный пайплайн
 
@@ -190,12 +191,13 @@ uv run recap batch recordings/ -o out/ -m brief   # в отдельную пап
 uv run recap batch recordings/ -p openai --model gpt-4o
 ```
 
-Поддерживаемые расширения: `.wav`, `.mp3`, `.m4a`, `.ogg`.
+Поддерживаемые расширения: `.wav`, `.mp3`, `.m4a`, `.ogg`, `.flac`, `.mp4`, `.mkv`, `.webm`
+(у видеофайлов берётся звуковая дорожка). Тот же список действует для `run` и десктоп-приложения.
 
 Для каждого файла `{name}.{ext}` создаются:
 - `{name}.txt` — транскрипция
-- `{name}_summary.txt` — саммари (формат `telegram`, по умолчанию)
-- `{name}_summary.json` — саммари (формат `json`, при `-f json`)
+- `{name}_summary.txt` — саммари в Markdown
+- `{name}_summary.json` — структурированное саммари
 
 Если в папке есть два файла с одинаковым именем, но разными расширениями (`call.wav` и `call.mp3`), команда завершается с ошибкой до обработки — чтобы не затирать результаты. Если отдельные файлы не удалось обработать, batch продолжает работу и в конце выводит счётчик `N succeeded, M failed`; exit code 1 при любых ошибках.
 
@@ -218,7 +220,6 @@ uv run recap summarize call.txt -m detailed -p openai --model gpt-4o
 ```bash
 uv run recap summarize call.txt -f json
 uv run recap summarize call.txt -f json > summary.json
-uv run recap run audio.wav -f json > summary.json
 ```
 
 ### Опции
@@ -228,8 +229,8 @@ uv run recap run audio.wav -f json > summary.json
 | `-o, --output PATH` | transcribe, summarize | Файл вывода |
 | `-o, --output-dir PATH` | batch | Папка вывода (по умолчанию — папка с аудио) |
 | `-l, --language TEXT` | transcribe, run, batch | Язык аудио (`ru`, `en`, …) |
-| `-m, --mode TEXT` | summarize, run, batch | Режим: `brief` \| `medium` \| `detailed` |
-| `-f, --format TEXT` | summarize, run, batch | Формат вывода: `telegram` (по умолчанию) \| `json` |
+| `-m, --mode TEXT` | summarize, run, batch | Режим: `brief` \| `medium` \| `detailed` \| `lecture` |
+| `-f, --format TEXT` | summarize | Что печатать в stdout: `markdown` (по умолчанию) \| `json`. Оба файла пишутся в любом случае |
 | `-p, --provider TEXT` | summarize, run, batch | Провайдер (см. таблицу выше) |
 | `--model TEXT` | summarize, run, batch | Модель LLM (переопределяет config) |
 | `--transcript PATH` | run | Путь для промежуточной транскрипции |
@@ -270,6 +271,8 @@ Rust-слой запускает второй entry point — `recap-bridge` (`p
 в `src/` и покрыта тестами. UI можно демонстрировать в браузере без Rust/GPU (встроенный mock-мост).
 
 - Разработка фронтенда и запуск реального приложения: [`desktop/README.md`](desktop/README.md).
+- Портативная сборка для Windows (распаковал и запустил `Recap.exe`, Python на машине не нужен):
+  [`docs/portable-build.md`](docs/portable-build.md).
 - Архитектура, контракт моста и спека: [`docs/desktop-tauri-spec.md`](docs/desktop-tauri-spec.md),
   [`docs/desktop-bridge-contract.md`](docs/desktop-bridge-contract.md).
 

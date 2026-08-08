@@ -11,8 +11,12 @@ these together with the pins in ``pyproject.toml``.
 
 from __future__ import annotations
 
+import ctypes
+import hashlib
 import json
+import logging
 import os
+import shutil
 import sys
 import tempfile
 import urllib.request
@@ -20,11 +24,19 @@ import zipfile
 from collections.abc import Callable
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 # (pypi package, exact version) — must match pyproject.toml and the frozen build.
 CUDA_PACKAGES: list[tuple[str, str]] = [
     ("nvidia-cublas-cu12", "12.9.2.10"),
-    ("nvidia-cudnn-cu12", "9.22.0.52"),
+    ("nvidia-cudnn-cu12", "9.24.0.43"),
 ]
+
+# Escape hatch for a detection that misfires on an exotic setup: "1"/"0" (also true/yes, false/no)
+# forces the answer of detect_nvidia_gpu() instead of asking the driver.
+GPU_OVERRIDE_ENV = "RECAP_ASSUME_GPU"
+_TRUTHY = {"1", "true", "yes", "on"}
+_FALSY = {"0", "false", "no", "off"}
 
 ProgressCallback = Callable[[int, int, str], None]  # (done_bytes, total_bytes, message)
 CancelCheck = Callable[[], bool]  # returns True when the user requested cancellation
@@ -72,34 +84,112 @@ def is_cuda_installed() -> bool:
     return sentinel.is_file() and sentinel.read_text(encoding="utf-8").strip() == _expected_marker()
 
 
-def _resolve_win_wheel(pkg: str, version: str) -> tuple[str, int]:
-    """Resolve the win_amd64 wheel URL (and size) for a pinned package via the PyPI JSON API."""
+def _load_cuda_driver() -> ctypes.CDLL | None:
+    """Load the NVIDIA *driver* library (not the CUDA runtime), or None when it isn't installed.
+
+    The driver ships ``nvcuda.dll`` in System32 (``libcuda.so.1`` on Linux); it is present exactly
+    when an NVIDIA GPU driver is installed and needs none of the cuBLAS/cuDNN libs this module
+    downloads. Loading it is a plain dlopen — no subprocess (``nvidia-smi`` would flash a console
+    window in the frozen desktop build) and no extra dependency.
+    """
+    names = ("nvcuda.dll",) if sys.platform == "win32" else ("libcuda.so.1", "libcuda.so")
+    for name in names:
+        try:
+            return ctypes.CDLL(name)
+        except OSError:
+            continue
+    return None
+
+
+def detect_nvidia_gpu() -> bool | None:
+    """Is a usable NVIDIA GPU present? ``True`` / ``False`` / ``None`` when it can't be determined.
+
+    Asks the installed driver via ctypes (``cuInit`` + ``cuDeviceGetCount``), so it costs a dlopen
+    and no download. ``None`` means the check itself failed (unexpected driver ABI) — callers must
+    treat it as "don't block the user" and behave as if the GPU might be there.
+    """
+    override = os.environ.get(GPU_OVERRIDE_ENV, "").strip().lower()
+    if override in _TRUTHY:
+        return True
+    if override in _FALSY:
+        return False
+
+    driver = _load_cuda_driver()
+    if driver is None:
+        logger.info("NVIDIA driver library not found — no CUDA-capable GPU on this machine")
+        return False
+    try:
+        cu_init = driver.cuInit
+        cu_init.restype = ctypes.c_int
+        cu_init.argtypes = [ctypes.c_uint]
+        rc = cu_init(0)
+        if rc != 0:  # driver present but unusable (no device, driver/library mismatch, …)
+            logger.info("cuInit failed with code %s — treating the machine as GPU-less", rc)
+            return False
+        count = ctypes.c_int(0)
+        get_count = driver.cuDeviceGetCount
+        get_count.restype = ctypes.c_int
+        get_count.argtypes = [ctypes.POINTER(ctypes.c_int)]
+        if get_count(ctypes.pointer(count)) != 0:
+            return None
+    except (AttributeError, OSError, ctypes.ArgumentError):
+        # Missing symbol / unexpected driver ABI → "undetermined", never a hard "no GPU".
+        logger.warning("NVIDIA GPU detection failed", exc_info=True)
+        return None
+    return count.value > 0
+
+
+def _resolve_win_wheel(pkg: str, version: str) -> tuple[str, str, int]:
+    """Resolve the win_amd64 wheel URL, its expected sha256 and its size via the PyPI JSON API.
+
+    The digest comes from the same response as the URL and is mandatory: without it the downloaded
+    DLLs could not be verified before they are extracted and later loaded into the process.
+    """
     api = f"https://pypi.org/pypi/{pkg}/{version}/json"
     with urllib.request.urlopen(api, timeout=30) as resp:  # noqa: S310 - fixed https PyPI host
         data = json.load(resp)
     for entry in data.get("urls", []):
         if entry.get("filename", "").endswith("win_amd64.whl"):
-            return entry["url"], int(entry.get("size") or 0)
+            sha256 = (entry.get("digests") or {}).get("sha256") or ""
+            if not sha256:
+                raise RuntimeError(f"PyPI не сообщил sha256 для {pkg}=={version} — загрузка небезопасна")
+            return entry["url"], sha256, int(entry.get("size") or 0)
     raise RuntimeError(f"Не найден win_amd64 wheel для {pkg}=={version}")
 
 
-def _extract_dlls(whl_path: Path, dest: Path) -> int:
-    """Extract only ``nvidia/**/bin/*.dll`` members from a wheel into ``dest``. Returns DLL count."""
+def _extract_dlls(whl_path: Path, dest: Path, check_cancel: Callable[[], None] | None = None) -> int:
+    """Extract only ``nvidia/**/bin/*.dll`` members from a wheel into ``dest``. Returns DLL count.
+
+    Every member name is validated before anything is created: ``..`` segments, backslash separators
+    and any name that resolves outside ``dest`` are refused, so a crafted wheel cannot drop a DLL
+    somewhere else on disk. Members are copied in chunks — a single cuDNN/cuBLAS DLL is hundreds of
+    MB and must never be held in memory whole. ``check_cancel`` (the raising variant used by
+    ``download_cuda_libs``) is polled between members so the unpack phase honours cancellation.
+    """
     count = 0
+    root = dest.resolve()
     with zipfile.ZipFile(whl_path) as zf:
         for name in zf.namelist():
             parts = name.split("/")
-            if parts[0] == "nvidia" and "bin" in parts and name.endswith(".dll"):
-                target = dest / name
-                target.parent.mkdir(parents=True, exist_ok=True)
-                with zf.open(name) as src, open(target, "wb") as out:
-                    out.write(src.read())
-                count += 1
+            if parts[0] != "nvidia" or "bin" not in parts or not name.endswith(".dll"):
+                continue
+            if check_cancel:
+                check_cancel()
+            target = dest / name
+            if ".." in parts or "\\" in name or not target.resolve().is_relative_to(root):
+                raise RuntimeError(f"Недопустимый путь внутри wheel: {name} — распаковка прервана")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(name) as src, open(target, "wb") as out:
+                shutil.copyfileobj(src, out, 1 << 20)
+            count += 1
     return count
 
 
 def download_cuda_libs(on_progress: ProgressCallback | None = None, cancel: CancelCheck | None = None) -> Path:
     """Download the pinned cuBLAS+cuDNN wheels and extract their DLLs into ``cuda_libs_dir()``.
+
+    Every wheel is hashed while it streams in and is extracted only when the digest matches the
+    sha256 PyPI publishes for it; a mismatch raises before anything is unpacked or marked complete.
 
     Reports byte progress across both wheels via ``on_progress`` and polls ``cancel`` frequently;
     on cancel it raises ``DownloadCancelled`` (the sentinel stays absent, so it re-offers). Returns
@@ -123,11 +213,12 @@ def download_cuda_libs(on_progress: ProgressCallback | None = None, cancel: Canc
     # Windows a still-open file cannot be unlinked (WinError 32), which used to abort the download
     # right after the first package — leaving a half-extracted cache and no sentinel.
     with tempfile.TemporaryDirectory(prefix="recap-cuda-") as tmp_dir:
-        for pkg, ver, url, _size in resolved:
+        for pkg, ver, url, expected_sha, _size in resolved:
             check_cancel()
             if on_progress:
                 on_progress(done, total, f"Загрузка {pkg} {ver}…")
             tmp_path = Path(tmp_dir) / f"{pkg}-{ver}.whl"
+            digest = hashlib.sha256()  # hashed as it streams in — the wheel is never held in memory
             try:
                 with (
                     urllib.request.urlopen(url, timeout=60) as resp,  # noqa: S310 - PyPI files host
@@ -136,12 +227,19 @@ def download_cuda_libs(on_progress: ProgressCallback | None = None, cancel: Canc
                     while chunk := resp.read(1 << 20):
                         check_cancel()
                         tmp.write(chunk)
+                        digest.update(chunk)
                         done += len(chunk)
                         if on_progress:
                             on_progress(min(done, total), total, f"Загрузка {pkg} {ver}…")
+                actual_sha = digest.hexdigest()
+                if actual_sha != expected_sha:
+                    raise RuntimeError(
+                        f"Контрольная сумма {pkg}=={ver} не совпала (ожидалось {expected_sha}, "
+                        f"получено {actual_sha}) — файл повреждён или подменён, установка прервана"
+                    )
                 if on_progress:
                     on_progress(done, total, f"Распаковка {pkg}…")
-                if _extract_dlls(tmp_path, dest) == 0:
+                if _extract_dlls(tmp_path, dest, check_cancel) == 0:
                     raise RuntimeError(f"В пакете {pkg}=={ver} не найдено DLL — повторите загрузку")
             finally:
                 tmp_path.unlink(missing_ok=True)

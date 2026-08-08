@@ -41,15 +41,38 @@ npm run build         # tsc --noEmit && vite build
 `npm run lint|test|build`; and the **Windows Rust toolchain** via `/mnt/c/Users/solov/.cargo/bin/cargo.exe`
 — `cargo.exe check` and `cargo.exe clippy` on `desktop/src-tauri` compile and lint the Rust in ~5s
 (deps are cached in `target/`). So a Rust change CAN be checked for compile/lint errors here — do it, don't
-assume you can't. What you CANNOT do here: actually run the GUI (`npm run tauri dev`, `tauri build`, launching
-the app) or GPU transcription — those need the user on Windows (PowerShell), output pasted back. So: Rust
+assume you can't. The *pipeline* is runnable here too — see "Desktop runtime debugging" below; it is the GPU
+that isn't. What you CANNOT do here: actually run the GUI (`npm run tauri dev`, `tauri build`, launching
+the app) or CUDA transcription — those need the user on Windows (PowerShell), output pasted back. So: Rust
 *compilation* is verifiable by you; Rust *runtime behaviour* (e.g. cancel actually stops a run, no console
 window flashes) stays **unverified until the user runs the app**.
+
+**Desktop runtime debugging.** When the desktop pipeline misbehaves, in this order:
+
+1. **Read the bridge log first** — `/mnt/c/Users/solov/AppData/Roaming/app.recap.desktop/logs/` is
+   plain-readable from WSL. Start with `recap-bridge-serve.log`: the persistent worker runs the
+   transcription and summarization, so that is where a failed run lands. `recap-bridge.log` holds the
+   spawn-per-call commands (settings, export, history). They are separate files because a rotation
+   cannot rename a file the other process holds open. Skipping the log once cost several "fixed →
+   still broken" rounds.
+2. **Reproduce the run from WSL**, no GUI needed: drive `desktop_bridge serve` as a subprocess with the
+   venv python, `RECAP_DESKTOP_DATA_DIR` pointing at a scratch dir holding its own `config.yaml`
+   (`model: tiny`, `device: cpu`). Real transcription does run this way.
+3. Two traps: **env vars do not cross WSL → Windows** — set them inside the driver script, not in the
+   shell; and the Windows **NUL device reports `isatty() = True`**, so a null stderr looks like a
+   terminal to libraries that redirect on that signal (this is what once swallowed progress output).
+4. Windows process inspection works from here: `tasklist.exe`, `powershell.exe Get-CimInstance Win32_Process`.
 
 **Honesty about verification.** Never claim a check passed unless you actually ran it in this session. If a
 check is impossible here (Rust/Tauri build, GPU transcription, a live LLM endpoint), say so explicitly and
 list what you did verify and what remains unverified. A false "verified" is worse than an honest gap. (See
-`docs/desktop-agent-checklist.md`.)
+`docs/desktop-agent-checklist.md`.) Saying it once is not enough: add a line to
+`docs/manual-qa-pending.md` (what you changed → how to check it) so the debt accumulates somewhere the
+user can work through, instead of being remembered only by whoever wrote it.
+
+**Docs are part of the change.** If you change behaviour this file, `docs/desktop-bridge-contract.md`,
+`docs/desktop-tauri-spec.md` or the README describe, update that document in the same change. A contract
+that outlives the code it describes is worse than no contract: the next agent obeys it.
 
 **Git:** never commit, create branches, or make other git changes without an explicit request from the user.
 
@@ -72,6 +95,11 @@ src/
 ├── utils.py          # write_text_atomic()
 ├── preprocessing.py  # preprocess_audio() + prepared_audio() context manager (ffmpeg)
 ├── prompts.py        # PROMPTS[lang][mode] + CHUNK_PROMPTS + JSON_PROMPTS[lang][mode]; get_prompt()
+├── cuda_support.py   # portable build: NVIDIA GPU detection (ctypes, driver only) + on-demand CUDA
+│                     #   runtime download (pure stdlib, no pip): pinned cuBLAS/cuDNN wheels →
+│                     #   sha256-verified DLL cache that whisper._set_cuda_paths() uses
+├── ollama_support.py # Ollama-only model presence check + streaming pull for the desktop
+│                     #   "model not installed" flow (pure stdlib, native /api/* endpoints)
 └── providers/
     ├── factory.py    # make_summarizer() / make_transcriber() — the single provider wiring point
     ├── whisper.py    # WhisperTranscriber (lazy faster_whisper import after CUDA path setup)
@@ -112,7 +140,8 @@ Non-obvious semantics:
   transcripts and merges per-chunk summaries; `truncate` cuts at the last newline before the limit.
 - `summarization.model.num_ctx` is Ollama's `options.num_ctx`; ignored by OpenAI/xAI.
 - `summarization.mode`: `brief` (2–3 sentences) | `medium` (topic + discussions + decisions) |
-  `detailed` (participants + timeline + tasks with owners).
+  `detailed` (participants + timeline + tasks with owners) | `lecture` (a study summary of a talk,
+  not meeting minutes). The authoritative list is `SUMMARY_MODES` in `prompts.py`.
 
 ## Key design rules
 
@@ -145,8 +174,10 @@ Non-obvious semantics:
   (raw text, or JSON when `structured=True`). It stays "dumb": validation/parsing live above it.
 - **Structured summary pipeline.** The `MeetingSummary` object is the single source of truth for all
   formats. `workflows._generate_summary()` tries JSON generation (`response_format`, modes in
-  `JSON_PROMPTS` only) → `parse_summary_json`; any failure (provider rejects `response_format`,
-  invalid JSON, schema mismatch) falls back to the text prompt + `formatters.parse_summary`. The
+  `JSON_PROMPTS` only) → `parse_summary_json`. `LLMSummarizer` asks for `SUMMARY_JSON_SCHEMA` first
+  and retries once with plain `json_object` if the server refuses that `response_format` (so a
+  refusal costs two provider calls); any failure after that (invalid JSON, schema mismatch) falls
+  back to the text prompt + `formatters.parse_summary`. The
   editable form depends on the front-end (`summary_format`): the desktop writes/edits Telegram-ready
   plain text (`to_plain` ↔ `parse_plain`), the CLI keeps Markdown (`render_markdown` ↔
   `parse_summary`). Saving and exporting re-parse the possibly-edited text through

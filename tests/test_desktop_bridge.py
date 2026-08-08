@@ -187,6 +187,69 @@ def test_export_summary_falls_back_from_old_format_json(tmp_path: Path) -> None:
     assert "Восстановлено из markdown" in md
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        pytest.param("", id="empty-file"),
+        pytest.param('{"mode":"medium","blocks":[{"heading":"A",', id="truncated"),
+        pytest.param("не json вовсе", id="not-json"),
+        pytest.param('{"mode":"medium","blocks":["строка"]}', id="block-not-object"),
+        pytest.param('{"mode":"medium","blocks":[{"heading":"A","paragraphs":[1]}]}', id="wrong-item-type"),
+    ],
+)
+def test_export_summary_falls_back_from_corrupt_json(tmp_path: Path, raw: str) -> None:
+    # A .json that is unreadable or fails validation must not sink the whole export: the summary
+    # text in the payload is intact, so the export renders from it.
+    broken = tmp_path / "m_summary.json"
+    broken.write_text(raw, encoding="utf-8")
+    res = desktop_bridge.export_summary(
+        {
+            "summary_json_path": str(broken),
+            "summary_text": "*Тема встречи*\nВосстановлено из текста",
+            "formats": ["markdown", "html"],
+            "target_dir": str(tmp_path),
+            "base_name": "m",
+            "mode": "medium",
+        }
+    )
+    assert "Восстановлено из текста" in Path(res["markdown_path"]).read_text(encoding="utf-8")
+    assert "Восстановлено из текста" in Path(res["html_path"]).read_text(encoding="utf-8")
+
+
+def test_export_summary_falls_back_from_non_utf8_json(tmp_path: Path) -> None:
+    broken = tmp_path / "m_summary.json"
+    broken.write_bytes(b'{"mode":"medium","blocks":[{"heading":"\xff\xfe\x00"}]}')
+    res = desktop_bridge.export_summary(
+        {
+            "summary_json_path": str(broken),
+            "summary_text": "ТЕМА ВСТРЕЧИ\n\nВосстановлено из текста",
+            "formats": ["markdown"],
+            "target_dir": str(tmp_path),
+            "base_name": "m",
+            "mode": "medium",
+        }
+    )
+    assert "Восстановлено из текста" in Path(res["markdown_path"]).read_text(encoding="utf-8")
+
+
+def test_export_summary_without_any_source_raises(tmp_path: Path) -> None:
+    # Corrupt .json *and* no usable text: fail loudly instead of writing four empty files.
+    broken = tmp_path / "m_summary.json"
+    broken.write_text("{не json", encoding="utf-8")
+    with pytest.raises(ValueError, match="Нечего экспортировать"):
+        desktop_bridge.export_summary(
+            {
+                "summary_json_path": str(broken),
+                "summary_text": "   ",
+                "formats": ["markdown", "json"],
+                "target_dir": str(tmp_path),
+                "base_name": "m",
+                "mode": "medium",
+            }
+        )
+    assert not (tmp_path / "m_summary.md").exists()
+
+
 def test_export_summary_subset_formats(tmp_path: Path) -> None:
     res = desktop_bridge.export_summary(
         {"summary_text": "x", "formats": ["json"], "target_dir": str(tmp_path), "base_name": "m"}
@@ -197,9 +260,10 @@ def test_export_summary_subset_formats(tmp_path: Path) -> None:
     assert res["html_path"] is None
 
 
-def test_save_summary_overwrites_legacy_markdown_and_json(tmp_path: Path) -> None:
+def test_save_summary_overwrites_legacy_markdown_and_json(tmp_path: Path, data_dir: Path) -> None:
     summary_path = tmp_path / "meeting_summary.txt"
     summary_path.write_text("старое", encoding="utf-8")
+    desktop_bridge._append_history({"id": "h1", "summary_path": str(summary_path)})
     res = desktop_bridge.save_summary(
         {
             "summary_text": "## Тема встречи\nНовый текст\n\n## Тема: A\n### Решения и задачи\n- сделать",
@@ -220,11 +284,69 @@ def test_save_summary_overwrites_legacy_markdown_and_json(tmp_path: Path) -> Non
     assert data["blocks"][1]["groups"][0]["items"] == ["сделать"]
 
 
-def test_save_summary_missing_dir_raises(tmp_path: Path) -> None:
+def test_save_summary_missing_dir_raises(tmp_path: Path, data_dir: Path) -> None:
+    summary_path = tmp_path / "nope" / "s_summary.txt"
+    desktop_bridge._append_history({"id": "h1", "summary_path": str(summary_path)})
     with pytest.raises(ValueError, match="Каталог не существует"):
-        desktop_bridge.save_summary(
-            {"summary_text": "x", "summary_path": str(tmp_path / "nope" / "s_summary.txt"), "mode": "medium"}
+        desktop_bridge.save_summary({"summary_text": "x", "summary_path": str(summary_path), "mode": "medium"})
+
+
+def test_save_summary_outside_history_denied(tmp_path: Path, data_dir: Path) -> None:
+    # The save target is scoped to summary files the history points at, so the command cannot be
+    # used to write anywhere on disk — including next to a legitimate entry.
+    known = tmp_path / "meeting_summary.txt"
+    desktop_bridge._append_history({"id": "h1", "summary_path": str(known)})
+
+    victim = tmp_path / "startup" / "evil.bat"
+    victim.parent.mkdir()
+    with pytest.raises(ValueError, match="не найден в истории"):
+        desktop_bridge.save_summary({"summary_text": "x", "summary_path": str(victim), "mode": "medium"})
+    assert not victim.exists()
+
+    # …nor via a traversal that normalises to a path outside the allowed set.
+    traversal = tmp_path / "sub" / ".." / "startup" / "evil.bat"
+    (tmp_path / "sub").mkdir()
+    with pytest.raises(ValueError, match="не найден в истории"):
+        desktop_bridge.save_summary({"summary_text": "x", "summary_path": str(traversal), "mode": "medium"})
+    assert not victim.exists()
+
+
+def test_save_summary_denied_when_history_only_references_other_keys(tmp_path: Path, data_dir: Path) -> None:
+    # Only summary_path is writable: a transcript the history points at must not be overwritable
+    # with summary text.
+    transcript = tmp_path / "meeting.txt"
+    transcript.write_text("исходный транскрипт", encoding="utf-8")
+    desktop_bridge._append_history({"id": "h1", "transcript_path": str(transcript)})
+    with pytest.raises(ValueError, match="не найден в истории"):
+        desktop_bridge.save_summary({"summary_text": "x", "summary_path": str(transcript), "mode": "medium"})
+    assert transcript.read_text(encoding="utf-8") == "исходный транскрипт"
+
+
+@pytest.mark.parametrize(
+    "base_name",
+    ["../evil", "..\\..\\evil", "sub/evil", "sub\\evil", "..", ".", "", "   ", "C:evil", "name:stream", "a\x00b"],
+)
+def test_export_summary_rejects_unsafe_base_name(tmp_path: Path, base_name: str) -> None:
+    with pytest.raises(ValueError, match="Недопустимое имя файла"):
+        desktop_bridge.export_summary(
+            {"summary_text": "x", "formats": ["json"], "target_dir": str(tmp_path), "base_name": base_name}
         )
+    # Nothing was written anywhere around the target directory.
+    assert list(tmp_path.rglob("*evil*")) == []
+
+
+def test_export_summary_accepts_ordinary_file_names(tmp_path: Path) -> None:
+    # Base names come from a real audio file stem: spaces, punctuation and non-ASCII must pass.
+    res = desktop_bridge.export_summary(
+        {
+            "summary_text": "x",
+            "formats": ["json"],
+            "target_dir": str(tmp_path),
+            "base_name": "Созвон (2026-07-05) #1 & co",
+        }
+    )
+    assert Path(res["json_path"]) == tmp_path / "Созвон (2026-07-05) #1 & co_summary.json"
+    assert Path(res["json_path"]).exists()
 
 
 # ── run_recap + history ─────────────────────────────────────────────────────────
@@ -259,6 +381,28 @@ def test_run_recap_success_writes_history(tmp_path: Path, patch_factory: None, d
     # History stores references only — never the transcript / summary body.
     assert "transcript_text" not in entry
     assert "summary_text" not in entry
+
+
+def test_save_summary_accepts_the_path_a_run_produced(tmp_path: Path, patch_factory: None, data_dir: Path) -> None:
+    # The live flow: the UI edits the summary of a finished run and saves it back to the very path
+    # the run reported, which the history entry references.
+    audio = tmp_path / "meeting.wav"
+    audio.write_bytes(b"RIFF" + b"\x00" * 32)
+    result = desktop_bridge.run_recap(
+        {
+            "audio_path": str(audio),
+            "transcript_path": str(tmp_path / "tr.txt"),
+            "summary_path": str(tmp_path / "sum.txt"),
+            "overrides": {"provider": "ollama", "mode": "medium"},
+        }
+    )
+    assert result.summary_path is not None
+
+    saved = desktop_bridge.save_summary(
+        {"summary_text": "ТЕМА ВСТРЕЧИ\n\nОтредактировано.", "summary_path": str(result.summary_path), "mode": "medium"}
+    )
+    assert Path(saved["summary_path"]).read_text(encoding="utf-8") == "ТЕМА ВСТРЕЧИ\n\nОтредактировано."
+    assert Path(saved["json_path"]).exists()
 
 
 def test_streaming_cancel_flag_records_cancelled_history(
@@ -314,6 +458,41 @@ def test_resummarize_reuses_transcript_and_writes_history(
     history = desktop_bridge.get_history()["items"]
     assert len(history) == 1
     assert history[0]["status"] == "success"
+
+
+def test_streaming_resummarize_cancel_flag_records_cancelled_history(
+    tmp_path: Path, patch_factory: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The cancel flag must reach resummarize_one too: a stop lands in history as `cancelled`
+    # (not `success`), with the existing transcript untouched on disk.
+    import providers.factory as factory_mod
+
+    def boom(*args: object, **kwargs: object) -> object:
+        raise AssertionError("no provider must be built after cancellation")
+
+    monkeypatch.setattr(factory_mod, "make_transcriber", boom)
+    monkeypatch.setattr(factory_mod, "make_summarizer", boom)
+
+    transcript_path = tmp_path / "tr.txt"
+    transcript_path.write_text("[0.00s -> 1.00s] сохранённый текст\n", encoding="utf-8")
+    flag = tmp_path / "cancel.flag"
+    flag.write_text("x", encoding="utf-8")
+
+    payload = {
+        "audio_path": str(tmp_path / "meeting.wav"),
+        "transcript_path": str(transcript_path),
+        "summary_path": str(tmp_path / "sum.txt"),
+        "overrides": {"provider": "ollama", "mode": "medium"},
+        "cancel_flag": str(flag),
+    }
+    rc = desktop_bridge._streaming("resummarize", payload)
+
+    assert rc == 0
+    history = desktop_bridge.get_history()["items"]
+    assert [item["status"] for item in history] == ["cancelled"]
+    assert history[0]["transcript_path"] == str(transcript_path)
+    assert transcript_path.exists()
+    assert not (tmp_path / "sum.txt").exists()
 
 
 def test_run_recap_external_provider_warns(tmp_path: Path, patch_factory: None) -> None:
@@ -395,6 +574,139 @@ def test_serve_reuses_transcriber_across_runs(
     assert rc == 0
     assert calls["n"] == 1  # model built once, reused for the second run
     assert len(desktop_bridge.get_history()["items"]) == 2  # both runs completed + recorded
+
+
+def test_pull_model_uses_saved_settings_not_payload(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The pull target comes from the saved config, like check_model — a payload-supplied address
+    # must not decide where the bridge POSTs.
+    import ollama_support
+
+    saved = desktop_bridge.get_settings()
+    saved["summarization"]["model"]["provider"] = "ollama"
+    saved["summarization"]["model"]["base_url"] = "http://127.0.0.1:11434/v1"
+    saved["summarization"]["model"]["name"] = "настроенная:latest"
+    desktop_bridge.save_settings(saved)
+
+    calls: list = []
+    monkeypatch.setattr(ollama_support, "pull_model", lambda *args, **kwargs: calls.append(args))
+
+    events: list = []
+    result = desktop_bridge.pull_model(
+        {"base_url": "http://evil.invalid/v1", "model": "чужая:latest"}, emit=events.append, cancel=None
+    )
+
+    assert result.status == "success"
+    assert [args[:2] for args in calls] == [("http://127.0.0.1:11434/v1", "настроенная:latest")]
+    assert all("evil.invalid" not in e.message for e in events)
+
+
+def test_pull_model_rejects_non_ollama_provider(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Only Ollama can pull; nothing must reach the network for any other provider.
+    import ollama_support
+
+    saved = desktop_bridge.get_settings()
+    saved["summarization"]["model"]["provider"] = "openai"
+    saved["summarization"]["model"]["base_url"] = None
+    desktop_bridge.save_settings(saved)
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise AssertionError("no pull must be attempted for a non-Ollama provider")
+
+    monkeypatch.setattr(ollama_support, "pull_model", boom)
+
+    events: list = []
+    result = desktop_bridge.pull_model(
+        {"base_url": "http://localhost:11434/v1", "model": "любая:latest"}, emit=events.append, cancel=None
+    )
+
+    assert result.status == "failed"
+    assert events[-1].status == "error"
+
+
+def _terminal_lines(out: str) -> list[dict]:
+    """The framing the Rust host relies on: one `result`/`error` line ends each request."""
+    return [obj for obj in (json.loads(line) for line in out.splitlines() if line.strip()) if obj["type"] != "progress"]
+
+
+def test_serve_cancel_flag_records_cancelled_history(
+    tmp_path: Path, data_dir: Path, patch_factory: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The worker path honours the cancel flag exactly like the spawn-per-call one, and still
+    # closes the request with a single terminal `result` line.
+    import logging
+
+    audio = tmp_path / "meeting.wav"
+    audio.write_bytes(b"RIFF" + b"\x00" * 32)
+    flag = tmp_path / "cancel.flag"
+    flag.write_text("x", encoding="utf-8")
+    request = json.dumps(
+        {
+            "audio_path": str(audio),
+            "transcript_path": str(tmp_path / "tr.txt"),
+            "summary_path": str(tmp_path / "sum.txt"),
+            "overrides": {"provider": "ollama", "mode": "medium"},
+            "cancel_flag": str(flag),
+        }
+    )
+
+    saved = logging.getLogger().handlers[:]
+    try:
+        assert desktop_bridge.serve([request]) == 0
+    finally:
+        root = logging.getLogger()
+        root.handlers.clear()
+        root.handlers.extend(saved)
+
+    terminal = _terminal_lines(capsys.readouterr().out)
+    assert len(terminal) == 1
+    assert terminal[0]["type"] == "result"
+    assert terminal[0]["result"]["status"] == "cancelled"
+    assert [item["status"] for item in desktop_bridge.get_history()["items"]] == ["cancelled"]
+
+
+def test_serve_survives_failing_run_and_serves_the_next(
+    tmp_path: Path, data_dir: Path, patch_factory: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A run that raises outside the workflow (here: an unreadable config.yaml) must produce one
+    # terminal `error` line and leave the worker alive — the host reads one terminal line per
+    # request, so a missing, doubled or crash-swallowed line desyncs it.
+    import logging
+    from collections.abc import Iterator
+
+    config_path = data_dir / "config.yaml"
+
+    def make_req(i: int) -> str:
+        audio = tmp_path / f"m{i}.wav"
+        audio.write_bytes(b"RIFF" + b"\x00" * 32)
+        return json.dumps(
+            {
+                "audio_path": str(audio),
+                "transcript_path": str(tmp_path / f"tr{i}.txt"),
+                "summary_path": str(tmp_path / f"sum{i}.txt"),
+                "overrides": {"provider": "ollama", "mode": "medium"},
+            }
+        )
+
+    def requests() -> Iterator[str]:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text("совсем_не_ключ: 1\n", encoding="utf-8")
+        yield make_req(1)
+        config_path.unlink()  # back to defaults for the second request
+        yield ""  # blank lines are skipped, not answered
+        yield make_req(2)
+
+    saved = logging.getLogger().handlers[:]
+    try:
+        assert desktop_bridge.serve(requests()) == 0
+    finally:
+        root = logging.getLogger()
+        root.handlers.clear()
+        root.handlers.extend(saved)
+
+    terminal = _terminal_lines(capsys.readouterr().out)
+    assert [obj["type"] for obj in terminal] == ["error", "result"]
+    assert terminal[1]["result"]["status"] == "success"
+    assert len(desktop_bridge.get_history()["items"]) == 1  # only the run that got past config load
 
 
 def test_history_append_delete_under_lock(data_dir: Path) -> None:
@@ -587,10 +899,11 @@ def test_read_text_binary_in_scope_handled(data_dir: Path) -> None:
     assert "error" in res
 
 
-def test_save_summary_round_trips_the_plain_text(tmp_path: Path) -> None:
+def test_save_summary_round_trips_the_plain_text(tmp_path: Path, data_dir: Path) -> None:
     # The desktop edits the plain text itself: the .txt keeps it verbatim and the .json is
     # re-derived from it, so a reopened item shows the edits and exports reflect them.
     summary_path = tmp_path / "meeting_summary.txt"
+    desktop_bridge._append_history({"id": "h1", "summary_path": str(summary_path)})
     plain = "ТЕМА ВСТРЕЧИ\n\nНовый текст.\n\n" + "━" * 20 + "\n\nТЕМА: A\n\nРешения и задачи:\n• Сделать."
     res = desktop_bridge.save_summary({"summary_text": plain, "summary_path": str(summary_path), "mode": "medium"})
 
@@ -642,5 +955,69 @@ def test_configure_logging_writes_file(data_dir: Path) -> None:
         root.handlers.extend(saved)
 
 
+def test_worker_and_one_shot_log_to_different_files(data_dir: Path) -> None:
+    # They run concurrently, and a rotation renames the file — which a second open handle blocks on
+    # Windows, silently dropping the record. Separate files remove the contention entirely.
+    import logging
+
+    saved = logging.getLogger().handlers[:]
+    logs = desktop_bridge._data_dir() / "logs"
+    try:
+        desktop_bridge._configure_logging(desktop_bridge.SERVE_LOG_NAME)
+        logging.getLogger("recap.test").error("from the worker")
+        logging.shutdown()
+        assert "from the worker" in (logs / desktop_bridge.SERVE_LOG_NAME).read_text(encoding="utf-8")
+        assert not (logs / "recap-bridge.log").exists()
+    finally:
+        root = logging.getLogger()
+        root.handlers.clear()
+        root.handlers.extend(saved)
+
+
 def test_read_text_none() -> None:
     assert desktop_bridge.read_text(None) == {"text": None, "exists": False}
+
+
+def test_force_utf8_io_covers_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The payload arrives as UTF-8 JSON; a locale-decoded stdin would mangle a Cyrillic audio_path.
+    import io
+    import sys
+
+    payload = {"audio_path": "C:/Аудио/встреча.mp3"}
+    raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")  # non-ASCII bytes, as Rust sends them
+    stdin = io.TextIOWrapper(io.BytesIO(raw), encoding="cp1251")
+    stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1251")
+    stderr = io.TextIOWrapper(io.BytesIO(), encoding="cp1251")
+    monkeypatch.setattr(sys, "stdin", stdin)
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(sys, "stderr", stderr)
+
+    desktop_bridge._force_utf8_io()
+
+    assert json.loads(sys.stdin.read()) == payload
+    assert sys.stdout.encoding == "utf-8"
+    assert sys.stderr.encoding == "utf-8"
+
+
+def test_force_utf8_io_survives_unreconfigurable_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An already-read stream raises io.UnsupportedOperation on reconfigure — swallow it, stay usable.
+    import io
+    import sys
+
+    stdin = io.TextIOWrapper(io.BytesIO("привет\nвторая\n".encode()), encoding="utf-8")
+    stdin.readline()
+    monkeypatch.setattr(sys, "stdin", stdin)
+
+    desktop_bridge._force_utf8_io()
+
+    assert sys.stdin.readline() == "вторая\n"
+
+
+def test_streaming_reports_a_malformed_cancel_flag_instead_of_raising(capsys: pytest.CaptureFixture[str]) -> None:
+    # The warm worker shares this wrapper, so a bad payload must end as an error line, not an
+    # exception that takes the process (and its loaded model) down.
+    rc = desktop_bridge._streaming("run_recap", {"cancel_flag": 42})
+
+    assert rc == 1
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert lines[-1]["type"] == "error"

@@ -44,8 +44,12 @@ class RunResult:
 
 Допустимые `step`:
 
+- `download` — разовая загрузка библиотек GPU (CUDA) в portable-сборке перед распознаванием;
+  в обычной сборке не появляется. Здесь же приходит `error`, если выбран `device: cuda`, а
+  видеокарты NVIDIA в машине нет (загрузка при этом не начинается);
 - `preprocess`;
-- `transcribe`;
+- `transcribe` — при `device: auto` без видеокарты NVIDIA сюда приходит `warning` о том, что
+  распознавание пойдёт на CPU и будет медленнее (сам запуск продолжается);
 - `summarize`;
 - `export`.
 
@@ -108,6 +112,7 @@ Output:
   "audio": "data/meeting.wav",
   "transcript": "data/transcript.txt",
   "summary": "data/summary.txt",
+  "output_dir": null,
   "privacy_ack": false,
   "transcription": {
     "language": "ru",
@@ -124,7 +129,7 @@ Output:
   "summarization": {
     "language": null,
     "mode": "medium",
-    "max_transcript_chars": 60000,
+    "max_transcript_chars": 42000,
     "timeout_seconds": 60.0,
     "retries": 2,
     "chunking_mode": "chunk",
@@ -147,11 +152,20 @@ Output:
     "loudness_range": 11.0,
     "highpass_hz": null,
     "keep_temp": false
+  },
+  "api_keys_configured": {
+    "openai": true,
+    "xai": false,
+    "ollama": false,
+    "lm-studio": false,
+    "vllm": false
   }
 }
 ```
 
-Важно: `api_key` не возвращать открытым текстом.
+Важно: `api_key` не возвращать открытым текстом. `api_keys_configured` — маска наличия ключа по
+каждому провайдеру (не только по сохранённому), чтобы UI показывал статус при переключении
+провайдера в черновике настроек.
 
 ### `save_settings`
 
@@ -227,7 +241,7 @@ Input:
 ```
 
 `run_mode` selects the pipeline slice (default `"full"`) — **distinct from `overrides.mode`**, which is
-the *summary* mode (brief/medium/detailed):
+the *summary* mode (brief/medium/detailed/lecture — `SUMMARY_MODES` в `prompts.py`):
 
 - `"full"` — preprocess (forced on) → transcribe → summarize → export.
 - `"transcribe"` — preprocess → transcribe only; returns `success` with the transcript written and no
@@ -288,7 +302,7 @@ transcript — the partial_success recovery path («Повторить сумм�
 
 Input: same shape as `run_recap`, but `transcript_path` must point at an existing transcript on disk
 (`audio_path` is carried for history metadata only, not read). Progress events and the final output
-object are identical to `run_recap`.
+object are identical to `run_recap`, cancellation included (`cancel_flag`, see §6).
 
 ### `export_summary`
 
@@ -297,7 +311,7 @@ Input:
 ```json
 {
   "summary_json_path": "C:/.../meeting_2026_06_19_summary.json",
-  "summary_text": "...edited plain text; Markdown from pre-plain entries (fallback if no/empty base json)...",
+  "summary_text": "...edited plain text; Markdown from pre-plain entries (fallback if the base json is missing/empty/corrupt)...",
   "formats": ["markdown", "plain", "html", "json"],
   "target_dir": "C:/meetings/output",
   "base_name": "meeting_2026_06_19",
@@ -315,6 +329,95 @@ Output:
   "json_path": "C:/.../meeting_2026_06_19_summary.json"
 }
 ```
+
+Источник данных для всех форматов — базовый `.json` (`summary_json_path`). Фолбэк на разбор
+`summary_text` срабатывает, если файла нет, если это старый `{mode, summary}` без `blocks`, а также
+если файл повреждён (обрезан, отредактирован руками, не UTF-8) — повреждённый `.json` больше не
+роняет экспорт целиком, а лишь пишется предупреждение в лог bridge. Если и текст пуст, экспорт
+завершается ошибкой `Нечего экспортировать: …` **до** записи файлов — пустые файлы не создаются.
+
+Ограничения на путь записи (все файлы кладутся строго в `target_dir`):
+
+- `target_dir` должен уже существовать — каталоги не создаются.
+- `base_name` — одиночный компонент имени файла: пустая строка, `.`, `..`, разделители пути
+  (`/`, `\`), `:` (диск и ADS в Windows) и управляющие символы отклоняются с ошибкой
+  `Недопустимое имя файла для экспорта`. Пробелы, пунктуация и не-ASCII допустимы (это обычно
+  stem аудиофайла).
+
+### `save_summary`
+
+Перезаписывает отредактированное саммари (`.txt`) и пересобирает соседний `.json` из его текста.
+
+Input:
+
+```json
+{
+  "summary_text": "...edited plain text (Markdown from pre-plain entries also parses)...",
+  "summary_path": "C:/.../meeting_2026_06_19_summary.txt",
+  "mode": "medium"
+}
+```
+
+Output:
+
+```json
+{
+  "summary_path": "C:/.../meeting_2026_06_19_summary.txt",
+  "json_path": "C:/.../meeting_2026_06_19_summary.json"
+}
+```
+
+`summary_path` должен совпадать с `summary_path` существующей записи истории (сравнение по
+нормализованному пути) — иначе ошибка `Файл саммари не найден в истории запусков`. Это ровно тот
+путь, который фронтенд получает из результата запуска или из открытой записи истории; записать
+куда-либо ещё команда не позволяет. Каталог данных приложения тоже недоступен для записи: в нём
+лежат `config.yaml` и `history.json`.
+
+### `check_model`
+
+Проверка, что настроенная модель суммаризации доступна. Нужна только Ollama: у остальных провайдеров
+нечего «доустанавливать», поэтому ответ всегда `installed: true`. Недоступная Ollama тоже даёт
+`installed: true` — запуск не блокируется, реальную ошибку покажет сам прогон.
+
+Input:
+
+```json
+{}
+```
+
+Output:
+
+```json
+{
+  "installed": false,
+  "provider": "ollama",
+  "model": "qwen3.5:latest",
+  "base_url": "http://localhost:11434/v1"
+}
+```
+
+### `pull_model` (стриминг)
+
+Загрузка модели в Ollama по ответу `check_model` с `installed: false`. Стримит те же
+`{"type":"progress"}`-строки, что `run_recap`, шагом `download`, и завершается обычным `result`
+с `RunResult`-формой (пути пустые). Отменяется тем же `cancel_flag` (§6); Ollama при этом продолжает
+качать на своей стороне, поэтому отменённая загрузка может всё же завершиться и попасть в кэш.
+
+Input:
+
+```json
+{
+  "cancel_flag": "C:/.../recap-cancel-<uuid>.flag"
+}
+```
+
+Адрес и имя модели **не берутся из payload** — мост резолвит их из сохранённых настроек, как
+`check_model`, и отказывает, если провайдер не `ollama`. UI и так лишь возвращает то, что ему отдал
+`check_model`, поэтому лишние поля в payload просто игнорируются.
+
+Молчащий сокет не подвешивает загрузку навсегда: таймаут ограничивает ожидание каждого чтения
+(`ollama_support.PULL_IDLE_TIMEOUT`), но не общую длительность — многогигабайтная модель качается
+столько, сколько идут байты.
 
 ### `get_history`
 
@@ -429,18 +532,30 @@ Output:
 - на каждый `run_recap`/`resummarize` Rust генерирует уникальный путь и передаёт его в payload
   как `cancel_flag` (ключ съедается мостом в `_streaming`, до сборки `RunOptions`);
 - по нажатию `Остановить` (`cancel_run`) watcher-поток в Rust создаёт этот файл;
-- `_streaming` строит `cancel = Path(cancel_flag).exists` и передаёт в `run_one_file`, который
-  проверяет флаг между этапами и возвращает `RunResult("cancelled", …)` — с сохранённым
-  `transcript_path`, если транскрипт уже записан;
+- `_streaming` строит `cancel = Path(cancel_flag).exists` и передаёт его и в `run_one_file`, и в
+  `resummarize_one`; оба проверяют флаг между этапами и возвращают `RunResult("cancelled", …)` — с
+  сохранённым `transcript_path`, если транскрипт уже записан (для resummarize он всегда на диске);
 - Rust дочитывает stdout до реального `result` (не синтезирует `cancelled` сам), поэтому отменённый
   запуск попадает в историю со статусом `cancelled` и указателем на транскрипт;
 - так как процесс не убит, `finally` в Python отрабатывает — временный WAV удаляется, ffmpeg не
   висит. Rust удаляет flag-файл по завершении запуска.
 
 Ограничение: во время самого этапа транскрибации (долгий, без прогресс-строк) отмена срабатывает
-только на его границе — это и есть текст предупреждения выше.
+только на его границе — это и есть текст предупреждения выше. То же и для суммаризации: это один
+длинный вызов LLM, и `LLMSummarizer` остаётся «тупым», поэтому флаг опрашивается вокруг вызова, а не
+внутри него. Практическая гранулярность для `resummarize`: до построения summarizer, после чтения
+транскрипта (до вызова) и сразу после того, как модель ответила. Последняя проверка общая с
+`run_recap` (она в `_summarize_and_export`): готовое саммари отбрасывается, на диск ничего не
+пишется, статус `cancelled`, транскрипт сохранён. Нажатие «Остановить» посреди генерации не обрывает
+HTTP-запрос: отмена применится, когда вызов вернётся.
 
 ## 7. Logging
+
+Файлы лога в `<data dir>/logs/`: `recap-bridge-serve.log` — долгоживущий воркер (там прогоны:
+транскрибация, суммаризация, CUDA), `recap-bridge.log` — spawn-per-call команды (настройки, экспорт,
+история). Файлы разные намеренно: процессы работают одновременно, а ротация переименовывает файл, что
+на Windows невозможно, пока его держит открытым другой процесс — `logging` глотает такую ошибку и
+теряет запись. Оба файла ротируются по 1 МБ, 3 бэкапа.
 
 Bridge должен различать:
 

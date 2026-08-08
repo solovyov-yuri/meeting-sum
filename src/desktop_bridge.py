@@ -21,7 +21,7 @@ import sys
 import uuid
 from collections.abc import Iterable, Iterator
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -40,23 +40,30 @@ logger = logging.getLogger(__name__)
 # through ``formatters.parse_plain``; every export is still rendered from the structured .json.
 DESKTOP_SUMMARY_FORMAT = "plain"
 
+# The persistent worker logs separately from the spawn-per-call processes — see _configure_logging.
+# It is the one that runs transcription and summarization, so it is the file to read first.
+SERVE_LOG_NAME = "recap-bridge-serve.log"
+
 
 # ── Desktop state locations ──────────────────────────────────────────────────────
 
 
 def _force_utf8_io() -> None:
-    """Make stdout/stderr UTF-8 regardless of the OS locale.
+    """Make stdin/stdout/stderr UTF-8 regardless of the OS locale.
 
     Belt-and-suspenders alongside the Rust shell's ``PYTHONUTF8=1``: on Windows a piped stdout/stderr
     otherwise defaults to cp1252, and writing Cyrillic/CJK (the JSON result, streamed LLM tokens)
-    crashes with "'charmap' codec can't encode". Covers direct/CLI invocation where the env is unset.
+    crashes with "'charmap' codec can't encode". The incoming payload is UTF-8 JSON too, so stdin gets
+    the same treatment — a locale-decoded stdin turns a Cyrillic ``audio_path`` into mojibake (cp1251)
+    or fails to decode at all (cp1252). Covers direct/CLI invocation where the env is unset. Must run
+    before the first read: ``reconfigure`` refuses to change the encoding of an already-read stream.
     """
-    for stream in (sys.stdout, sys.stderr):
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is not None:
             try:
                 reconfigure(encoding="utf-8")
-            except (ValueError, OSError):  # pragma: no cover - stream not reconfigurable
+            except (ValueError, OSError):  # stream not reconfigurable (e.g. already read from)
                 pass
 
 
@@ -71,10 +78,15 @@ def _data_dir() -> Path:
     return base
 
 
-def _configure_logging() -> None:
+def _configure_logging(log_name: str = "recap-bridge.log") -> None:
     """Bridge logging: warnings+ to stderr (plain), and full detail to a rotating log file in the
     data dir (ARCH-004). Field problems (CUDA/keyring/LLM tracebacks from ``logger.exception``)
     thus land somewhere inspectable. Logging setup must never break the bridge itself.
+
+    The worker and the spawn-per-call processes write to *different* files on purpose. They run at
+    the same time, and on Windows a rotation is an ``os.rename`` of a file the other process still
+    holds open — which fails with a sharing violation that ``logging`` swallows, silently dropping
+    the record and letting the file grow past its limit for as long as the worker lives.
     """
     from logging.handlers import RotatingFileHandler  # noqa: PLC0415
 
@@ -90,9 +102,7 @@ def _configure_logging() -> None:
     try:
         log_dir = _data_dir() / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
-        file_h = RotatingFileHandler(
-            log_dir / "recap-bridge.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8"
-        )
+        file_h = RotatingFileHandler(log_dir / log_name, maxBytes=1_000_000, backupCount=3, encoding="utf-8")
         file_h.setLevel(logging.INFO)
         file_h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
         root.addHandler(file_h)
@@ -389,11 +399,14 @@ def get_history() -> dict[str, Any]:
     return {"items": _read_history()}
 
 
-def _history_referenced_paths() -> set[Path]:
+_RESULT_PATH_KEYS = ("transcript_path", "summary_path", "summary_json_path")
+
+
+def _history_referenced_paths(keys: tuple[str, ...] = _RESULT_PATH_KEYS) -> set[Path]:
     """Resolved result-file paths the history legitimately points at."""
     allowed: set[Path] = set()
     for it in _read_history():
-        for key in ("transcript_path", "summary_path", "summary_json_path"):
+        for key in keys:
             value = it.get(key)
             if value:
                 with contextlib.suppress(OSError):
@@ -413,6 +426,40 @@ def _is_readable_path(p: Path) -> bool:
     if resolved == data or data in resolved.parents:
         return True
     return resolved in _history_referenced_paths()
+
+
+def _is_writable_summary_path(p: Path) -> bool:
+    """Saving an edited summary may only overwrite the summary file of an existing history entry —
+    exactly the path the UI hands back after a run or when reopening an entry. Deliberately
+    narrower than the read scope: the app data dir stays read-only here, because it holds
+    ``config.yaml`` and ``history.json``, which no webview-supplied path may clobber."""
+    try:
+        resolved = p.resolve()
+    except OSError:
+        return False
+    return resolved in _history_referenced_paths(("summary_path",))
+
+
+def _safe_base_name(raw: Any) -> str:
+    """Validate the export base name: file names are built by concatenating it with a suffix, so it
+    must stay a single, plain path component and never steer the write out of the target directory.
+
+    Checked against both path flavours rather than only the host's, plus an explicit ``:`` — on
+    Windows that introduces a drive-relative path or an alternate data stream, and ``ntpath`` does
+    not treat it as a separator. Characters that are merely illegal in a Windows file name are left
+    alone: they are legal on POSIX and a bad one just fails the write.
+    """
+    name = raw.strip() if isinstance(raw, str) else ""
+    if (
+        not name
+        or name in {".", ".."}
+        or ":" in name
+        or any(ch < " " or ch == "\x7f" for ch in name)
+        or name != PurePosixPath(name).name
+        or name != PureWindowsPath(name).name
+    ):
+        raise ValueError(f"Недопустимое имя файла для экспорта: {raw!r}")
+    return name
 
 
 def read_text(path: str | None) -> dict[str, Any]:
@@ -448,30 +495,40 @@ def _append_history(entry: dict[str, Any]) -> None:
 
 def export_summary(payload: dict[str, Any]) -> dict[str, Any]:
     from formatters import parse_summary_text, render_markdown, to_html, to_json, to_plain  # noqa: PLC0415
-    from summary_schema import load_summary_json  # noqa: PLC0415
+    from summary_schema import SummaryValidationError, load_summary_json  # noqa: PLC0415
 
     formats = payload.get("formats") or ["markdown", "plain", "html", "json"]
     target_dir = Path(payload["target_dir"])
-    base_name = payload["base_name"]
+    # Both inputs come from the webview, and both are constrained so the four writes below stay
+    # inside the chosen directory: the base name must be a plain file-name component, and the
+    # directory itself must already exist (SEC-003 — no arbitrary directory trees are created).
+    base_name = _safe_base_name(payload["base_name"])
     mode = payload.get("mode") or "medium"
 
-    # SEC-003: export only into an existing directory (the save dialog returns one); do not
-    # create arbitrary directory trees at a webview-supplied path.
     if not target_dir.is_dir():
         raise ValueError(f"Каталог для экспорта не существует: {target_dir}")
 
     # The base .json (written by the run and by "Сохранить") is the single source of truth: every
-    # exported format is rendered from it. Fall back to parsing the (edited) Markdown summary_text
-    # when there is no JSON, or when the JSON is an old pre-structured {mode, summary} file that
-    # deserializes to an empty object — otherwise a reopened old-format item would export blank.
+    # exported format is rendered from it. Fall back to parsing the (edited) summary_text when there
+    # is no JSON, when the JSON is an old pre-structured {mode, summary} file that deserializes to an
+    # empty object, or when the file on disk is corrupt (truncated, hand-edited, not UTF-8) —
+    # otherwise a reopened old-format item would export blank and a damaged file would block the
+    # export outright, even though the payload carries a perfectly good summary text.
     json_path = payload.get("summary_json_path")
     summary = None
     if json_path and Path(json_path).is_file():
-        summary = load_summary_json(Path(json_path).read_text(encoding="utf-8"))
-        if not summary.blocks:  # old/foreign JSON with no blocks → fall back to the Markdown
+        try:
+            summary = load_summary_json(Path(json_path).read_text(encoding="utf-8"))
+        except (SummaryValidationError, UnicodeDecodeError):
+            logger.warning("Base summary JSON is unusable; exporting from the text: %s", json_path, exc_info=True)
+            summary = None
+        if summary is not None and not summary.blocks:  # old/foreign JSON with no blocks
             summary = None
     if summary is None:
         summary = parse_summary_text(payload.get("summary_text") or "", mode)
+    if not summary.blocks:
+        # Nothing survived either source — writing four empty files would look like a successful export.
+        raise ValueError("Нечего экспортировать: текст саммари пуст, а файл .json отсутствует или повреждён")
     out: dict[str, Any] = {"markdown_path": None, "plain_path": None, "html_path": None, "json_path": None}
 
     if "markdown" in formats:
@@ -503,8 +560,6 @@ def check_model() -> dict[str, Any]:
     Only Ollama can pull models; for other providers (and when Ollama is unreachable) this returns
     ``installed: True`` so the run proceeds and surfaces any real error itself.
     """
-    from config import PROVIDER_PRESETS  # noqa: PLC0415
-
     settings = _load_settings()
     model_cfg = settings.summarization.model
     provider = model_cfg.provider
@@ -523,11 +578,22 @@ def check_model() -> dict[str, Any]:
 
 
 def pull_model(payload: dict[str, Any], *, emit: Any, cancel: Any) -> workflows.RunResult:
-    """Streaming: pull the Ollama model, reporting progress as a ``download`` step."""
+    """Streaming: pull the configured Ollama model, reporting progress as a ``download`` step.
+
+    Target and model name are resolved from the saved settings, exactly like ``check_model`` — the
+    payload is deliberately not read. The UI only ever echoes back what ``check_model`` reported,
+    so nothing is lost, and a webview-supplied URL cannot turn this command into a POST to an
+    arbitrary address from the bridge process.
+    """
     import ollama_support  # noqa: PLC0415
 
-    base_url = payload["base_url"]
-    model = payload["model"]
+    model_cfg = _load_settings().summarization.model
+    base_url = model_cfg.base_url or PROVIDER_PRESETS.get(model_cfg.provider)
+    model = model_cfg.name
+    if model_cfg.provider != "ollama" or not base_url:
+        msg = "Загрузка моделей доступна только для Ollama."
+        emit(workflows.ProgressEvent(workflows.STEP_DOWNLOAD, "error", msg))
+        return workflows.RunResult("failed", None, None, None, None, None, msg)
 
     def on_progress(completed: int, total: int, status: str) -> None:
         pct = (completed / total) if total else None
@@ -552,13 +618,18 @@ def save_summary(payload: dict[str, Any]) -> dict[str, Any]:
     """Persist the edited summary: overwrite the canonical ``.txt`` and re-derive the structured
     ``.json`` from it (parse → object → JSON). Mirrors what a run writes, so reopening the history
     item reflects the edits. The text is the plain-text form; ``parse_summary_text`` still accepts
-    the Markdown written by pre-plain-text runs."""
+    the Markdown written by pre-plain-text runs.
+
+    The target is restricted to a summary file the history points at, so this command cannot be
+    turned into a write to an arbitrary location on disk."""
     from formatters import parse_summary_text, to_json  # noqa: PLC0415
 
     summary_text = payload["summary_text"]
     summary_path = Path(payload["summary_path"])
     mode = payload.get("mode") or "medium"
 
+    if not _is_writable_summary_path(summary_path):
+        raise ValueError(f"Файл саммари не найден в истории запусков: {summary_path}")
     if not summary_path.parent.is_dir():
         raise ValueError(f"Каталог не существует: {summary_path.parent}")
 
@@ -681,11 +752,12 @@ def resummarize(
     payload: dict[str, Any],
     *,
     emit: workflows.ProgressCallback | None = None,
-    cancel: workflows.CancelCheck | None = None,  # noqa: ARG001 - accepted for a uniform streaming signature
+    cancel: workflows.CancelCheck | None = None,
 ) -> workflows.RunResult:
     """Re-run only summarization on an existing transcript and record a history entry.
 
     Used by "Повторить суммаризацию": no re-transcription, so long meetings are cheap to retry.
+    ``cancel`` is polled around the LLM call, so a stop lands in history as ``cancelled``.
     """
     options = _build_run_options(payload)
     settings = _load_settings()
@@ -694,7 +766,9 @@ def resummarize(
 
     _maybe_emit_privacy_warning(settings, provider, emit)
 
-    result = workflows.resummarize_one(options, settings=settings, progress=emit, summary_format=DESKTOP_SUMMARY_FORMAT)
+    result = workflows.resummarize_one(
+        options, settings=settings, progress=emit, cancel=cancel, summary_format=DESKTOP_SUMMARY_FORMAT
+    )
     _record_history(options, provider, settings, result, run_mode="summarize")
     return result
 
@@ -740,20 +814,27 @@ _STREAMING_COMMANDS = {
 }
 
 
-def _streaming(command: str, payload: dict[str, Any]) -> int:
+def _streaming(command: str, payload: dict[str, Any], **runner_kwargs: Any) -> int:
+    """Run one streaming request and emit its framing: progress lines, then exactly one terminal
+    ``result``/``error`` line (the Rust host reads until that line). Shared by the spawn-per-call
+    entry point and the persistent worker — ``runner_kwargs`` carries what only the latter passes
+    (``transcriber_factory``), so both paths keep identical cancellation and error handling.
+    """
+
     def emit(event: workflows.ProgressEvent) -> None:
         _emit_line({"type": "progress", "event": _event_to_dict(event)})
 
     # Cooperative cancellation (ARCH-002): the Rust host passes the path of a flag file it
     # creates when the user hits "Stop". The workflow polls this between stages and returns a
     # real RunResult("cancelled") — so the transcript pointer and history entry are preserved.
-    # Popped here so it never reaches _build_run_options.
-    cancel_flag = payload.pop("cancel_flag", None)
-    cancel: workflows.CancelCheck | None = Path(cancel_flag).exists if cancel_flag else None
-
+    # Popped inside the boundary below (never reaching _build_run_options) because a malformed
+    # value must become an error line, not an exception: in the warm worker it would take the
+    # process — and the loaded model — down with it.
     runner = _STREAMING_COMMANDS[command]
     try:
-        result = runner(payload, emit=emit, cancel=cancel)
+        cancel_flag = payload.pop("cancel_flag", None)
+        cancel: workflows.CancelCheck | None = Path(cancel_flag).exists if cancel_flag else None
+        result = runner(payload, emit=emit, cancel=cancel, **runner_kwargs)
     except Exception as exc:  # noqa: BLE001 - boundary: report, never crash silently
         logger.exception("%s failed", command)
         _emit_line({"type": "error", "error": workflows.humanize_error(exc)})
@@ -771,16 +852,17 @@ def _transcriber_key(settings: Settings) -> tuple[Any, ...]:
 def serve(lines: Iterable[str] | None = None) -> int:
     """Persistent worker (PERF-001): keep the Whisper model warm across ``run_recap`` requests.
 
-    Reads one JSON run-request per line from stdin and streams, per run, the same framing as
-    ``_streaming``: ``{"type":"progress"}`` events then a terminal ``{"type":"result"}`` /
-    ``{"type":"error"}`` line (the Rust host reads until that terminal line and keeps the pipe
-    open). Only ``run_recap`` is served here — ``resummarize`` is LLM-only and stays spawn-per-call.
+    Reads one JSON run-request per line from stdin and hands each to ``_streaming``, so a run here
+    streams exactly the framing of a spawn-per-call one: ``{"type":"progress"}`` events then a
+    terminal ``{"type":"result"}`` / ``{"type":"error"}`` line (the Rust host reads until that
+    terminal line and keeps the pipe open). Only ``run_recap`` is served here — ``resummarize`` is
+    LLM-only and stays spawn-per-call.
 
     At most one transcriber is cached; a change to the transcription model drops the old one
     (freeing GPU memory) before building the new.
     """
     _force_utf8_io()
-    _configure_logging()
+    _configure_logging(SERVE_LOG_NAME)
     cache: dict[tuple[Any, ...], WhisperTranscriber] = {}
 
     def factory(settings: Settings) -> WhisperTranscriber:
@@ -792,9 +874,6 @@ def serve(lines: Iterable[str] | None = None) -> int:
             cache[key] = make_transcriber(settings)
         return cache[key]
 
-    def emit(event: workflows.ProgressEvent) -> None:
-        _emit_line({"type": "progress", "event": _event_to_dict(event)})
-
     for raw in lines if lines is not None else sys.stdin:
         line = raw.strip()
         if not line:
@@ -804,15 +883,9 @@ def serve(lines: Iterable[str] | None = None) -> int:
         except json.JSONDecodeError as exc:
             _emit_line({"type": "error", "error": f"Некорректный JSON: {exc}"})
             continue
-        cancel_flag = payload.pop("cancel_flag", None)
-        cancel: workflows.CancelCheck | None = Path(cancel_flag).exists if cancel_flag else None
-        try:
-            result = run_recap(payload, emit=emit, cancel=cancel, transcriber_factory=factory)
-        except Exception as exc:  # noqa: BLE001 - boundary: report, never crash the worker
-            logger.exception("serve run failed")
-            _emit_line({"type": "error", "error": workflows.humanize_error(exc)})
-            continue
-        _emit_line({"type": "result", "result": _result_to_dict(result)})
+        # Same framing and error boundary as the spawn-per-call path; a failed run emits its error
+        # line there and the worker simply moves on to the next request.
+        _streaming("run_recap", payload, transcriber_factory=factory)
     return 0
 
 

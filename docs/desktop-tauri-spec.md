@@ -231,7 +231,7 @@ UI должен быть desktop-first: плотный, рабочий, акку
 Поля:
 
 - language;
-- mode: `brief`, `medium`, `detailed`;
+- mode: `brief`, `medium`, `detailed`, `lecture`;
 - max_transcript_chars;
 - timeout_seconds;
 - retries;

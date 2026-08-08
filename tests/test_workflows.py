@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -266,6 +267,7 @@ def test_run_one_file_downloads_cuda_when_frozen(tmp_path: Path, audio_file: Pat
     import cuda_support
 
     monkeypatch.setattr(_sys, "frozen", True, raising=False)
+    monkeypatch.setattr(cuda_support, "detect_nvidia_gpu", lambda: True)  # never inherit this machine's hardware
     monkeypatch.setattr(cuda_support, "is_cuda_installed", lambda: False)
     called = {"download": False}
 
@@ -295,6 +297,7 @@ def test_run_one_file_cuda_download_cancelled(tmp_path: Path, audio_file: Path, 
     import cuda_support
 
     monkeypatch.setattr(_sys, "frozen", True, raising=False)
+    monkeypatch.setattr(cuda_support, "detect_nvidia_gpu", lambda: True)
     monkeypatch.setattr(cuda_support, "is_cuda_installed", lambda: False)
 
     def cancel_download(on_progress=None, cancel=None):  # type: ignore[no-untyped-def]
@@ -309,6 +312,105 @@ def test_run_one_file_cuda_download_cancelled(tmp_path: Path, audio_file: Path, 
     result = run_one_file(options, settings=Settings(), progress=lambda e: None)
     assert result.status == "cancelled"
     assert not (tmp_path / "tr.txt").exists()  # aborted before transcription
+
+
+def _frozen_no_download(monkeypatch: pytest.MonkeyPatch, *, gpu: bool | None) -> dict[str, bool]:
+    """Portable build with the GPU answer forced; records whether the CUDA download was attempted."""
+    import sys as _sys
+
+    import cuda_support
+
+    called = {"download": False}
+
+    def fake_download(on_progress=None, cancel=None):  # type: ignore[no-untyped-def]
+        called["download"] = True
+        return Path()
+
+    monkeypatch.setattr(_sys, "frozen", True, raising=False)
+    monkeypatch.setattr(cuda_support, "detect_nvidia_gpu", lambda: gpu)
+    monkeypatch.setattr(cuda_support, "is_cuda_installed", lambda: False)
+    monkeypatch.setattr(cuda_support, "download_cuda_libs", fake_download)
+    return called
+
+
+def _device_settings(device: str) -> Settings:
+    model = replace(Settings().transcription.model, device=device)
+    return replace(Settings(), transcription=replace(Settings().transcription, model=model))
+
+
+def test_run_one_file_cuda_without_gpu_fails_before_download(
+    tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No NVIDIA card + device=cuda → an actionable error and NOT a single byte downloaded.
+    called = _frozen_no_download(monkeypatch, gpu=False)
+    _patch_providers(monkeypatch, Transcript(segments=(Segment(0.0, 1.0, "x"),)), FakeSummarizer())
+
+    events: list[ProgressEvent] = []
+    options = RunOptions(
+        audio_path=audio_file, transcript_path=tmp_path / "tr.txt", summary_path=tmp_path / "sum.txt", provider="ollama"
+    )
+    result = run_one_file(options, settings=_device_settings("cuda"), progress=events.append)
+
+    assert not called["download"]
+    assert result.status == "failed"
+    assert result.error_message is not None
+    assert "NVIDIA" in result.error_message and "cpu" in result.error_message
+    assert [e.status for e in events if e.step == "download"] == ["error"]
+    assert not (tmp_path / "tr.txt").exists()  # transcription never started
+
+
+def test_run_one_file_auto_without_gpu_warns_and_runs_on_cpu(
+    tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No NVIDIA card + device=auto → CPU fallback is allowed, but it is announced (log + event),
+    # never silent, and it still downloads nothing.
+    called = _frozen_no_download(monkeypatch, gpu=False)
+    _patch_providers(monkeypatch, Transcript(segments=(Segment(0.0, 1.0, "речь"),)), FakeSummarizer("резюме"))
+
+    events: list[ProgressEvent] = []
+    options = RunOptions(
+        audio_path=audio_file, transcript_path=tmp_path / "tr.txt", summary_path=tmp_path / "sum.txt", provider="ollama"
+    )
+    result = run_one_file(options, settings=_device_settings("auto"), progress=events.append)
+
+    assert not called["download"]
+    assert result.status == "success"
+    warnings = [e.message for e in events if e.status == "warning"]
+    assert any("CPU" in m and "NVIDIA" in m for m in warnings)
+
+
+def test_run_one_file_auto_with_gpu_does_not_download(
+    tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # device=auto on a GPU machine keeps today's behaviour: no download, no warning.
+    called = _frozen_no_download(monkeypatch, gpu=True)
+    _patch_providers(monkeypatch, Transcript(segments=(Segment(0.0, 1.0, "речь"),)), FakeSummarizer("резюме"))
+
+    events: list[ProgressEvent] = []
+    options = RunOptions(
+        audio_path=audio_file, transcript_path=tmp_path / "tr.txt", summary_path=tmp_path / "sum.txt", provider="ollama"
+    )
+    result = run_one_file(options, settings=_device_settings("auto"), progress=events.append)
+
+    assert not called["download"]
+    assert result.status == "success"
+    assert not [e for e in events if e.step == "download"]
+
+
+def test_run_one_file_cuda_downloads_when_gpu_undetectable(
+    tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Detection failed (None) → never block the user: behave exactly as before and download.
+    called = _frozen_no_download(monkeypatch, gpu=None)
+    _patch_providers(monkeypatch, Transcript(segments=(Segment(0.0, 1.0, "речь"),)), FakeSummarizer("резюме"))
+
+    options = RunOptions(
+        audio_path=audio_file, transcript_path=tmp_path / "tr.txt", summary_path=tmp_path / "sum.txt", provider="ollama"
+    )
+    result = run_one_file(options, settings=_device_settings("cuda"), progress=lambda e: None)
+
+    assert called["download"]
+    assert result.status == "success"
 
 
 def test_run_one_file_emits_transcribe_percent(
@@ -451,6 +553,36 @@ def test_run_one_file_cancel_after_transcribe_keeps_transcript(
     assert (tmp_path / "tr.txt").exists()
 
 
+def test_run_one_file_cancel_during_generation_discards_summary(
+    tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Stop pressed while the LLM is answering: the transcript stays on disk, the finished summary
+    # is discarded (nothing written) and the run reports `cancelled`, not `success`.
+    summarizer = FakeSummarizer("итоги")
+    stopped = {"now": False}
+
+    def summarize(text: str, structured: bool = False) -> str:
+        stopped["now"] = True
+        return "итоги"
+
+    monkeypatch.setattr(summarizer, "summarize", summarize)
+    _patch_providers(monkeypatch, Transcript(segments=(Segment(0.0, 1.0, "x"),)), summarizer)
+
+    options = RunOptions(
+        audio_path=audio_file,
+        transcript_path=tmp_path / "tr.txt",
+        summary_path=tmp_path / "sum.txt",
+        provider="ollama",
+    )
+    result = run_one_file(options, settings=Settings(), cancel=lambda: stopped["now"])
+
+    assert result.status == "cancelled"
+    assert result.transcript_path == tmp_path / "tr.txt"
+    assert (tmp_path / "tr.txt").exists()
+    assert result.summary_path is None
+    assert not (tmp_path / "sum.txt").exists()
+
+
 def test_run_one_file_unknown_provider_fails(tmp_path: Path, audio_file: Path) -> None:
     options = RunOptions(audio_path=audio_file, provider="grok")
     result = run_one_file(options, settings=Settings())
@@ -555,6 +687,76 @@ def test_resummarize_one_partial_on_llm_failure(tmp_path: Path, monkeypatch: pyt
     assert result.status == "partial_success"
     assert not (tmp_path / "sum.txt").exists()
     assert result.transcript_text is not None
+
+
+def test_resummarize_one_cancel_before_summarize(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Stop pressed before the LLM call: no summarizer is even built, the saved transcript stays
+    # on disk and is still pointed at by the result.
+    transcript_path = tmp_path / "tr.txt"
+    transcript_path.write_text("[0.00s -> 1.00s] текст\n", encoding="utf-8")
+
+    import providers.factory as factory_mod
+
+    def no_summarizer(*args: object, **kwargs: object) -> object:
+        raise AssertionError("summarizer must not be built after cancellation")
+
+    monkeypatch.setattr(factory_mod, "make_transcriber", _exploding_transcriber)
+    monkeypatch.setattr(factory_mod, "make_summarizer", no_summarizer)
+
+    options = RunOptions(
+        audio_path=tmp_path / "meeting.wav",
+        transcript_path=transcript_path,
+        summary_path=tmp_path / "sum.txt",
+        provider="ollama",
+    )
+    result = workflows.resummarize_one(options, settings=Settings(), cancel=lambda: True)
+
+    assert result.status == "cancelled"
+    assert result.transcript_path == transcript_path
+    assert transcript_path.exists()
+    assert not (tmp_path / "sum.txt").exists()
+
+
+def test_resummarize_one_cancel_during_generation_discards_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Summarization is one long LLM call: a stop pressed while the model answers takes effect at
+    # the boundary right after it returns — nothing is written and the status is `cancelled`.
+    transcript_path = tmp_path / "tr.txt"
+    transcript_path.write_text("[0.00s -> 1.00s] текст\n", encoding="utf-8")
+
+    import providers.factory as factory_mod
+
+    summarizer = FakeSummarizer("резюме")
+    monkeypatch.setattr(factory_mod, "make_transcriber", _exploding_transcriber)
+    monkeypatch.setattr(
+        factory_mod,
+        "make_summarizer",
+        lambda settings, provider, mode, model_override=None, summary_language=None: summarizer,
+    )
+
+    stopped = {"now": False}
+
+    def summarize(text: str, structured: bool = False) -> str:
+        stopped["now"] = True  # the user hits "Стоп" while the call is in flight
+        return "резюме"
+
+    monkeypatch.setattr(summarizer, "summarize", summarize)
+
+    options = RunOptions(
+        audio_path=tmp_path / "meeting.wav",
+        transcript_path=transcript_path,
+        summary_path=tmp_path / "sum.txt",
+        provider="ollama",
+    )
+    result = workflows.resummarize_one(options, settings=Settings(), cancel=lambda: stopped["now"])
+
+    assert result.status == "cancelled"
+    assert result.transcript_path == transcript_path
+    assert result.transcript_text is not None
+    assert result.summary_path is None
+    assert not (tmp_path / "sum.txt").exists()
+    assert not (tmp_path / "sum.json").exists()
 
 
 def test_humanize_error_timeout() -> None:

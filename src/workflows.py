@@ -69,7 +69,7 @@ class RunOptions:
 
 @dataclass(frozen=True)
 class ProgressEvent:
-    step: str  # preprocess | transcribe | summarize | export
+    step: str  # one of the STEP_* constants above
     status: str  # pending | running | success | warning | error | cancelled
     message: str
     percent: float | None = None
@@ -143,17 +143,46 @@ def _ensure_cuda(
     cancelled: CancelCheck,
     failed: Callable[[str, str], RunResult],
 ) -> RunResult | None:
-    """Portable build only: download the GPU (CUDA) libs once before a cuda transcription run.
+    """Portable build only: check the hardware, then download the GPU (CUDA) libs once before a
+    cuda transcription run.
 
     Returns None to proceed; a cancelled/failed RunResult to abort. No-op on a dev/installer build
-    (CUDA ships in the venv) or when the device isn't ``cuda``. Progress streams as a ``download``
-    step and the run's cancel flag stops it mid-download.
+    (CUDA ships in the venv) or when the device is ``cpu``. The GPU check runs *before* the
+    ~2 GB download: on a machine without an NVIDIA card ``cuda`` fails right here with an
+    actionable message and downloads nothing, while ``auto`` falls back to CPU but says so out loud
+    (log + a ``transcribe`` warning event) instead of degrading silently. When the check cannot
+    determine the answer it never blocks — the run proceeds exactly as before. Progress streams as
+    a ``download`` step and the run's cancel flag stops it mid-download.
     """
     import sys  # noqa: PLC0415
 
-    if not getattr(sys, "frozen", False) or settings.transcription.model.device != "cuda":
+    device = settings.transcription.model.device
+    if not getattr(sys, "frozen", False) or device == "cpu":
         return None
-    from cuda_support import DownloadCancelled, download_cuda_libs, is_cuda_installed  # noqa: PLC0415
+    from cuda_support import (  # noqa: PLC0415
+        DownloadCancelled,
+        detect_nvidia_gpu,
+        download_cuda_libs,
+        is_cuda_installed,
+    )
+
+    gpu = detect_nvidia_gpu()
+    if gpu is False:
+        if device == "auto":
+            msg = "Видеокарта NVIDIA не найдена — распознавание пойдёт на CPU и займёт заметно больше времени."
+            logger.warning("No NVIDIA GPU detected; device=auto falls back to CPU")
+            emit(ProgressEvent(STEP_TRANSCRIBE, "warning", msg))
+            return None
+        logger.error("No NVIDIA GPU detected; device=cuda cannot work — skipping the CUDA download")
+        return failed(
+            STEP_DOWNLOAD,
+            "Видеокарта NVIDIA не найдена, а устройство распознавания задано как «cuda». "
+            "Библиотеки GPU (около 2 ГБ) не загружались — выберите «cpu» или «auto» в настройках.",
+        )
+    if device != "cuda":
+        return None  # auto + GPU present (or undetermined): behaviour unchanged, no download
+    if gpu is None:
+        logger.warning("Could not determine whether an NVIDIA GPU is present — continuing as configured")
 
     if is_cuda_installed():
         return None
@@ -327,6 +356,7 @@ def run_one_file(
         transcript_text=transcript_text,
         emit=emit,
         summary_format=summary_format,
+        cancelled=cancelled,
     )
 
 
@@ -419,12 +449,17 @@ def _summarize_and_export(
     transcript_text: str,
     emit: ProgressCallback,
     summary_format: str,
+    cancelled: CancelCheck = _never_cancelled,
 ) -> RunResult:
     """Summarize an in-memory transcript and write the .txt/.json summaries.
 
     Shared by ``run_one_file`` and ``resummarize_one``, which build the ``summarizer`` once
     (during early validation) and hand it in. On LLM/IO failure returns ``partial_success``
     with the transcript paths preserved.
+
+    Generation is a single long provider call, so ``cancelled`` is polled around it, not inside
+    it (the summarizer stays dumb): a stop requested while the model is answering takes effect
+    as soon as the call returns, before anything is written.
     """
     from formatters import render_markdown, to_json, to_plain  # noqa: PLC0415
     from utils import write_text_atomic  # noqa: PLC0415
@@ -444,6 +479,10 @@ def _summarize_and_export(
         emit(ProgressEvent(STEP_SUMMARIZE, "error", msg))
         # partial_success: transcript is on disk, only summarization failed.
         return RunResult("partial_success", transcript_path, None, None, transcript_text, None, msg)
+    if cancelled():
+        msg = "Остановлено пользователем во время суммаризации."
+        emit(ProgressEvent(STEP_SUMMARIZE, "cancelled", msg))
+        return RunResult("cancelled", transcript_path, None, None, transcript_text, None, msg)
     emit(ProgressEvent(STEP_SUMMARIZE, "success", "Саммари готово."))
 
     emit(ProgressEvent(STEP_EXPORT, "running", "Сохранение результатов…"))
@@ -475,6 +514,7 @@ def resummarize_one(
     *,
     settings: Settings | None = None,
     progress: ProgressCallback | None = None,
+    cancel: CancelCheck | None = None,
     summary_format: str = "markdown",
 ) -> RunResult:
     """Re-run summarization only, reusing the transcript already on disk.
@@ -483,11 +523,16 @@ def resummarize_one(
     to regenerate with different settings) — it never re-transcribes, so long meetings
     are not re-processed. Requires ``options.transcript_path`` to point at a saved
     transcript. ``summary_format`` is as in :func:`run_one_file`.
+
+    ``cancel`` is the same cooperative check as in :func:`run_one_file`: polled at the step
+    boundaries around the single LLM call, it returns ``RunResult("cancelled", …)`` with the
+    existing transcript still pointed at, so nothing is lost.
     """
     from providers.factory import make_summarizer  # noqa: PLC0415
     from transcript import Transcript  # noqa: PLC0415
 
     emit = progress if progress is not None else _noop
+    cancelled = cancel if cancel is not None else _never_cancelled
     if settings is None:
         settings = Settings.load()
 
@@ -501,6 +546,14 @@ def resummarize_one(
         msg = f"Транскрипт не найден: {transcript_path}"
         emit(ProgressEvent(STEP_SUMMARIZE, "error", msg))
         return RunResult("failed", None, None, None, None, None, msg)
+
+    def stopped(text: str | None) -> RunResult:
+        msg = "Остановлено пользователем."
+        emit(ProgressEvent(STEP_SUMMARIZE, "cancelled", msg))
+        return RunResult("cancelled", transcript_path, None, None, text, None, msg)
+
+    if cancelled():
+        return stopped(None)
 
     try:
         summarizer = make_summarizer(settings, provider_name, mode_name, options.model, options.summary_language)
@@ -528,6 +581,9 @@ def resummarize_one(
         emit(ProgressEvent(STEP_EXPORT, "error", msg))
         return RunResult("partial_success", transcript_path, None, None, transcript_text, None, msg)
 
+    if cancelled():
+        return stopped(transcript_text)
+
     emit(ProgressEvent(STEP_TRANSCRIBE, "success", "Используется сохранённый транскрипт.", path=transcript_path))
     return _summarize_and_export(
         settings,
@@ -542,4 +598,5 @@ def resummarize_one(
         transcript_text=transcript_text,
         emit=emit,
         summary_format=summary_format,
+        cancelled=cancelled,
     )

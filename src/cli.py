@@ -17,6 +17,9 @@ if isinstance(sys.stdout, TextIOWrapper):
 app = typer.Typer(help="Meeting transcription and summarization tool")
 logger = logging.getLogger(__name__)
 
+# Keep in sync with SUMMARY_MODES in prompts.py.
+_MODE_HELP = "Summary mode: brief | medium | detailed | lecture"
+
 
 def _configure_logging(verbose: bool) -> None:
     # Non-verbose: suppress workflow ERROR tracebacks (the user-facing message already comes back
@@ -94,7 +97,7 @@ def batch(
     output_dir: Annotated[
         Path | None, typer.Option("-o", "--output-dir", help="Output directory (defaults to folder)")
     ] = None,
-    mode: Annotated[str | None, typer.Option("-m", "--mode", help="Summary mode: brief | medium | detailed")] = None,
+    mode: Annotated[str | None, typer.Option("-m", "--mode", help=_MODE_HELP)] = None,
     model: Annotated[str | None, typer.Option("--model", help="Model name (overrides config)")] = None,
     provider: Annotated[
         str | None, typer.Option("-p", "--provider", help="Provider: openai | xai | ollama | lm-studio | vllm")
@@ -278,7 +281,7 @@ def summarize(
         Path | None, typer.Argument(file_okay=True, dir_okay=False, help="Transcript file to summarize")
     ] = None,
     output: Annotated[Path | None, typer.Option("-o", "--output", help="Output summary file")] = None,
-    mode: Annotated[str | None, typer.Option("-m", "--mode", help="Summary mode: brief | medium | detailed")] = None,
+    mode: Annotated[str | None, typer.Option("-m", "--mode", help=_MODE_HELP)] = None,
     model: Annotated[str | None, typer.Option("--model", help="Model name (overrides config)")] = None,
     provider: Annotated[
         str | None, typer.Option("-p", "--provider", help="Provider: openai | xai | ollama | lm-studio | vllm")
@@ -343,7 +346,7 @@ def run(
     summary_language: Annotated[
         str | None, typer.Option("--summary-language", help="Summary language (ru). Defaults to ru.")
     ] = None,
-    mode: Annotated[str | None, typer.Option("-m", "--mode", help="Summary mode: brief | medium | detailed")] = None,
+    mode: Annotated[str | None, typer.Option("-m", "--mode", help=_MODE_HELP)] = None,
     model: Annotated[str | None, typer.Option("--model", help="Model name (overrides config)")] = None,
     provider: Annotated[str | None, typer.Option("-p", "--provider")] = None,
     transcript: Annotated[Path | None, typer.Option("--transcript")] = None,

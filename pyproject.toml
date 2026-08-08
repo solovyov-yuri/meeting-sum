@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "recap"
-version = "0.1.0"
+version = "0.2.0"
 description = "Meeting transcription and summarization tool"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -15,7 +15,7 @@ dependencies = [
     # there (DEP-003). whisper._set_cuda_paths() already guards each preload with `if exists()`, so a
     # CPU-only Linux/Windows box that never installs a GPU is fine too.
     "nvidia-cublas-cu12>=12.9.2.10; sys_platform != 'darwin'",
-    "nvidia-cudnn-cu12>=9.22.0.52; sys_platform != 'darwin'",
+    "nvidia-cudnn-cu12>=9.24.0.43; sys_platform != 'darwin'",
     "openai>=2,<3",
     "pyyaml>=6.0",
     "rich>=13.0",
@@ -28,6 +28,9 @@ recap-bridge = "desktop_bridge:main"
 
 [dependency-groups]
 dev = ["pytest>=8.0", "ruff>=0.9", "mypy>=1.15"]
+# Build-only, used by scripts/build-portable.ps1. Capped: the freeze is sensitive to PyInstaller's
+# behaviour, and an unpinned latest would change the portable build with no repo change to bisect.
+packaging = ["pyinstaller>=6,<7"]
 
 [tool.hatch.build.targets.wheel]
 sources = {"src" = ""}
@@ -48,9 +51,6 @@ src = ["src"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "W", "UP"]
 ignore = ["E501"]
-
-[tool.ruff.lint.isort]
-known-first-party = ["cli", "config", "desktop_bridge", "formatters", "models", "preprocessing", "prompts", "providers", "secrets_store", "transcript", "utils", "workflows"]
 
 [tool.mypy]
 python_version = "3.12"

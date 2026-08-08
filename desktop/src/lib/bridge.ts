@@ -349,6 +349,22 @@ function browserBridge(): Bridge {
           path: null,
         });
       }
+      if (cancelled) {
+        // Stopped inside transcription, before the transcript was written — the real pipeline
+        // polls the flag at step boundaries, so there is nothing on disk to point at.
+        emit({ step: "transcribe", status: "cancelled", message: "Остановлено пользователем.", percent: null, path: null });
+        const result: RunResult = {
+          status: "cancelled",
+          transcript_path: null,
+          summary_path: null,
+          summary_json_path: null,
+          transcript_text: null,
+          summary_text: null,
+          error_message: "Остановлено пользователем.",
+        };
+        pushHistory(req, result, provider, name);
+        return result;
+      }
       const transcriptPath = req.transcript_path ?? "C:/recap/transcript.txt";
       emit({
         step: "transcribe",
@@ -423,6 +439,7 @@ function browserBridge(): Bridge {
       return result;
     },
     async resummarize(req, onProgress) {
+      cancelled = false;
       const provider = req.overrides?.provider ?? settings.summarization.model.provider;
       const src = req.audio_path ?? req.transcript_path ?? "summary";
       const name = src.split(/[\\/]/).pop() ?? src;
@@ -458,6 +475,21 @@ function browserBridge(): Bridge {
       } else {
         onProgress({ step: "summarize", status: "running", message: `Суммаризация началась: ${provider}.`, percent: null, path: null });
         await delay(700);
+        if (cancelled) {
+          // The flag is polled once the model has answered: the summary is dropped, the transcript stays.
+          onProgress({ step: "summarize", status: "cancelled", message: "Остановлено пользователем.", percent: null, path: null });
+          const stopped: RunResult = {
+            status: "cancelled",
+            transcript_path: transcriptPath,
+            summary_path: null,
+            summary_json_path: null,
+            transcript_text: transcriptText,
+            summary_text: null,
+            error_message: "Остановлено пользователем.",
+          };
+          pushHistory(req, stopped, provider, name);
+          return stopped;
+        }
         onProgress({ step: "summarize", status: "success", message: "Саммари готово.", percent: null, path: null });
         onProgress({ step: "export", status: "success", message: `Готово: ${summaryPath}`, percent: null, path: summaryPath });
         files[summaryPath] = MOCK_SUMMARY;
