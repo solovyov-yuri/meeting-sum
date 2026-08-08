@@ -48,6 +48,9 @@
   `PYTHONIOENCODING=utf-8`). Проверить в чистом PowerShell без `PYTHONUTF8`/`PYTHONIOENCODING`:
   `recap-bridge run_recap < payload.json`, где `audio_path` — путь с кириллицей; в ответе должен
   быть нормальный путь, а не кракозябры и не traceback `UnicodeDecodeError`.
+- 2026-08-08 — лог моста разделён на два файла (`recap-bridge-serve.log` для воркера,
+  `recap-bridge.log` для одиночных команд) — прогнать приложение и убедиться, что оба появляются и
+  что прогон пишется именно в serve-файл.
 - 2026-07-02 — Tailwind 4 — визуальный обзор границ, focus-ring и теней в запущенном приложении
   (сборка и тесты зелёные с миграции, глазами никто не смотрел).
 

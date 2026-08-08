@@ -49,8 +49,12 @@ window flashes) stays **unverified until the user runs the app**.
 
 **Desktop runtime debugging.** When the desktop pipeline misbehaves, in this order:
 
-1. **Read the bridge log first** — `/mnt/c/Users/solov/AppData/Roaming/app.recap.desktop/logs/recap-bridge.log`
-   is plain-readable from WSL. Skipping it once cost several "fixed → still broken" rounds.
+1. **Read the bridge log first** — `/mnt/c/Users/solov/AppData/Roaming/app.recap.desktop/logs/` is
+   plain-readable from WSL. Start with `recap-bridge-serve.log`: the persistent worker runs the
+   transcription and summarization, so that is where a failed run lands. `recap-bridge.log` holds the
+   spawn-per-call commands (settings, export, history). They are separate files because a rotation
+   cannot rename a file the other process holds open. Skipping the log once cost several "fixed →
+   still broken" rounds.
 2. **Reproduce the run from WSL**, no GUI needed: drive `desktop_bridge serve` as a subprocess with the
    venv python, `RECAP_DESKTOP_DATA_DIR` pointing at a scratch dir holding its own `config.yaml`
    (`model: tiny`, `device: cpu`). Real transcription does run this way.

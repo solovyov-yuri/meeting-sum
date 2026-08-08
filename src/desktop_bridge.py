@@ -40,6 +40,10 @@ logger = logging.getLogger(__name__)
 # through ``formatters.parse_plain``; every export is still rendered from the structured .json.
 DESKTOP_SUMMARY_FORMAT = "plain"
 
+# The persistent worker logs separately from the spawn-per-call processes — see _configure_logging.
+# It is the one that runs transcription and summarization, so it is the file to read first.
+SERVE_LOG_NAME = "recap-bridge-serve.log"
+
 
 # ── Desktop state locations ──────────────────────────────────────────────────────
 
@@ -74,10 +78,15 @@ def _data_dir() -> Path:
     return base
 
 
-def _configure_logging() -> None:
+def _configure_logging(log_name: str = "recap-bridge.log") -> None:
     """Bridge logging: warnings+ to stderr (plain), and full detail to a rotating log file in the
     data dir (ARCH-004). Field problems (CUDA/keyring/LLM tracebacks from ``logger.exception``)
     thus land somewhere inspectable. Logging setup must never break the bridge itself.
+
+    The worker and the spawn-per-call processes write to *different* files on purpose. They run at
+    the same time, and on Windows a rotation is an ``os.rename`` of a file the other process still
+    holds open — which fails with a sharing violation that ``logging`` swallows, silently dropping
+    the record and letting the file grow past its limit for as long as the worker lives.
     """
     from logging.handlers import RotatingFileHandler  # noqa: PLC0415
 
@@ -93,9 +102,7 @@ def _configure_logging() -> None:
     try:
         log_dir = _data_dir() / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
-        file_h = RotatingFileHandler(
-            log_dir / "recap-bridge.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8"
-        )
+        file_h = RotatingFileHandler(log_dir / log_name, maxBytes=1_000_000, backupCount=3, encoding="utf-8")
         file_h.setLevel(logging.INFO)
         file_h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
         root.addHandler(file_h)
@@ -855,7 +862,7 @@ def serve(lines: Iterable[str] | None = None) -> int:
     (freeing GPU memory) before building the new.
     """
     _force_utf8_io()
-    _configure_logging()
+    _configure_logging(SERVE_LOG_NAME)
     cache: dict[tuple[Any, ...], WhisperTranscriber] = {}
 
     def factory(settings: Settings) -> WhisperTranscriber:

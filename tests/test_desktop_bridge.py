@@ -955,6 +955,25 @@ def test_configure_logging_writes_file(data_dir: Path) -> None:
         root.handlers.extend(saved)
 
 
+def test_worker_and_one_shot_log_to_different_files(data_dir: Path) -> None:
+    # They run concurrently, and a rotation renames the file — which a second open handle blocks on
+    # Windows, silently dropping the record. Separate files remove the contention entirely.
+    import logging
+
+    saved = logging.getLogger().handlers[:]
+    logs = desktop_bridge._data_dir() / "logs"
+    try:
+        desktop_bridge._configure_logging(desktop_bridge.SERVE_LOG_NAME)
+        logging.getLogger("recap.test").error("from the worker")
+        logging.shutdown()
+        assert "from the worker" in (logs / desktop_bridge.SERVE_LOG_NAME).read_text(encoding="utf-8")
+        assert not (logs / "recap-bridge.log").exists()
+    finally:
+        root = logging.getLogger()
+        root.handlers.clear()
+        root.handlers.extend(saved)
+
+
 def test_read_text_none() -> None:
     assert desktop_bridge.read_text(None) == {"text": None, "exists": False}
 
