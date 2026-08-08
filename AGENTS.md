@@ -91,8 +91,9 @@ src/
 ├── utils.py          # write_text_atomic()
 ├── preprocessing.py  # preprocess_audio() + prepared_audio() context manager (ffmpeg)
 ├── prompts.py        # PROMPTS[lang][mode] + CHUNK_PROMPTS + JSON_PROMPTS[lang][mode]; get_prompt()
-├── cuda_support.py   # on-demand CUDA runtime download for the portable build (pure stdlib, no pip):
-│                     #   pinned cuBLAS/cuDNN wheels → DLL cache that whisper._set_cuda_paths() uses
+├── cuda_support.py   # portable build: NVIDIA GPU detection (ctypes, driver only) + on-demand CUDA
+│                     #   runtime download (pure stdlib, no pip): pinned cuBLAS/cuDNN wheels →
+│                     #   sha256-verified DLL cache that whisper._set_cuda_paths() uses
 ├── ollama_support.py # Ollama-only model presence check + streaming pull for the desktop
 │                     #   "model not installed" flow (pure stdlib, native /api/* endpoints)
 └── providers/
