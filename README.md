@@ -42,7 +42,7 @@ transcription:
 summarization:
   # language: ru               # язык промптов LLM; по умолчанию ru
   mode: medium                 # brief | medium | detailed | lecture
-  max_transcript_chars: 60000  # лимит одного LLM-запроса; длинные транскрипты разбиваются на чанки (chunking_mode: chunk)
+  max_transcript_chars: 42000  # лимит одного LLM-запроса; длинные транскрипты разбиваются на чанки (chunking_mode: chunk)
   model:
     provider: ollama           # openai | xai | ollama | lm-studio | vllm
     name: qwen3.5:latest
@@ -196,8 +196,8 @@ uv run recap batch recordings/ -p openai --model gpt-4o
 
 Для каждого файла `{name}.{ext}` создаются:
 - `{name}.txt` — транскрипция
-- `{name}_summary.txt` — саммари (формат `telegram`, по умолчанию)
-- `{name}_summary.json` — саммари (формат `json`, при `-f json`)
+- `{name}_summary.txt` — саммари в Markdown
+- `{name}_summary.json` — структурированное саммари
 
 Если в папке есть два файла с одинаковым именем, но разными расширениями (`call.wav` и `call.mp3`), команда завершается с ошибкой до обработки — чтобы не затирать результаты. Если отдельные файлы не удалось обработать, batch продолжает работу и в конце выводит счётчик `N succeeded, M failed`; exit code 1 при любых ошибках.
 
@@ -220,7 +220,6 @@ uv run recap summarize call.txt -m detailed -p openai --model gpt-4o
 ```bash
 uv run recap summarize call.txt -f json
 uv run recap summarize call.txt -f json > summary.json
-uv run recap run audio.wav -f json > summary.json
 ```
 
 ### Опции
@@ -231,7 +230,7 @@ uv run recap run audio.wav -f json > summary.json
 | `-o, --output-dir PATH` | batch | Папка вывода (по умолчанию — папка с аудио) |
 | `-l, --language TEXT` | transcribe, run, batch | Язык аудио (`ru`, `en`, …) |
 | `-m, --mode TEXT` | summarize, run, batch | Режим: `brief` \| `medium` \| `detailed` \| `lecture` |
-| `-f, --format TEXT` | summarize, run, batch | Формат вывода: `telegram` (по умолчанию) \| `json` |
+| `-f, --format TEXT` | summarize | Что печатать в stdout: `markdown` (по умолчанию) \| `json`. Оба файла пишутся в любом случае |
 | `-p, --provider TEXT` | summarize, run, batch | Провайдер (см. таблицу выше) |
 | `--model TEXT` | summarize, run, batch | Модель LLM (переопределяет config) |
 | `--transcript PATH` | run | Путь для промежуточной транскрипции |
