@@ -19,6 +19,8 @@ from models import Block, Group, MeetingSummary
 #
 # Headings/labels are free text: whatever a user types survives save→export. The guarantee is render
 # idempotence — ``render(parse(render(obj))) == render(obj)`` — not a round-trip of arbitrary Markdown.
+# It rests on every string in the object being single-line: the parsers below read line by line, and
+# ``summary_schema`` collapses line breaks on the only other way in (the LLM's JSON, and our own).
 
 _SEP = "━" * 20
 

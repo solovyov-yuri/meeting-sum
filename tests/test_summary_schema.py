@@ -75,6 +75,57 @@ def test_load_summary_json_round_trips_to_json() -> None:
     assert load_summary_json(to_json(obj)) == obj
 
 
+def test_collapses_line_breaks_in_every_string() -> None:
+    # Renderers and parsers are line-based, so a newline inside any string would re-parse as a
+    # different block. The model is kept single-line by construction instead.
+    raw = """
+    {
+      "intro": "первая\\n\\nвторая",
+      "participants": ["Ян\\nПетров"],
+      "sections": [{
+        "title": "Тема\\nдлинная",
+        "points": ["п1\\nхвост"],
+        "actions": [{"text": "сделать\\nвсё", "owner": "Ян\\nП"}, "строкой\\r\\nвторой"]
+      }],
+      "takeaways": ["итог\\n- подпункт"],
+      "joke": "ха\\nха"
+    }
+    """
+    got = parse_summary_json(raw, "medium")
+    assert got == MeetingSummary(
+        mode="medium",
+        blocks=(
+            Block(heading="Участники", groups=(Group(None, ("Ян Петров",)),)),
+            Block(heading="Тема встречи", paragraphs=("первая вторая",)),
+            Block(
+                heading="Тема: Тема длинная",
+                groups=(
+                    Group("Ключевые обсуждения", ("п1 хвост",)),
+                    Group("Решения и задачи", ("сделать всё — Ян П", "строкой второй")),
+                ),
+            ),
+            Block(heading="Главное", groups=(Group(None, ("итог - подпункт",)),)),
+            Block(heading="Курьёз встречи", paragraphs=("ха ха",)),
+        ),
+    )
+
+
+def test_load_summary_json_heals_line_breaks_in_an_existing_file() -> None:
+    # A base .json written before the normalisation (or hand-edited) must come back single-line,
+    # so reopening it for export cannot move an item's tail into the block's prose.
+    got = load_summary_json(
+        '{"mode": "medium", "blocks": [{"heading": "Тема:\\nX", "paragraphs": ["проза\\n\\nещё"],'
+        ' "groups": [{"label": "Метка\\nM", "items": ["line1\\nline2"]}]}]}'
+    )
+    assert got.blocks == (
+        Block(
+            heading="Тема: X",
+            paragraphs=("проза ещё",),
+            groups=(Group("Метка M", ("line1 line2",)),),
+        ),
+    )
+
+
 def test_load_summary_json_empty_on_old_rich_format() -> None:
     # An old {mode, intro, sections} base .json has no "blocks" key → empty (signals the caller to
     # fall back to re-parsing the Markdown).

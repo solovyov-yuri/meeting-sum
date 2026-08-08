@@ -2,6 +2,7 @@ import json
 
 from formatters import parse_plain, parse_summary, parse_summary_text, render_markdown, to_html, to_json, to_plain
 from models import Block, Group, MeetingSummary
+from summary_schema import load_summary_json
 
 # The Meeting Summary.pdf / preview references as a structured object (block model).
 MEDIUM = MeetingSummary(
@@ -221,4 +222,57 @@ def test_parse_plain_ignores_separators_and_blank_lines() -> None:
 def test_parse_summary_text_picks_the_parser() -> None:
     # Plain text (current editor) vs Markdown (entries written before the switch, and the CLI).
     assert parse_summary_text("ТЕМА ВСТРЕЧИ\n\n• пункт", "medium").blocks[0].groups[0].items == ("пункт",)
+
+
+# ── render idempotence on line breaks inside the content ─────────────────────
+
+# Content that reaches the model always passes through ``summary_schema`` (LLM JSON, or the base
+# .json reopened on export/save), which is where line breaks are collapsed; the parsers themselves
+# are line-based and cannot produce a multi-line string. So the fixtures below build the "dirty"
+# object the way production would receive it and let that boundary normalise it.
+_LINE_BREAKS = ("a\nb", "a\n\nb", "a\r\nb", "a\n- b", "a\n• b", "a\n  \n  b")
+
+
+def _normalized(*, marker: str) -> MeetingSummary:
+    """A summary whose every string slot carries ``marker``, healed through the schema boundary."""
+    dirty = MeetingSummary(
+        mode="medium",
+        blocks=(
+            Block(
+                heading=f"Тема: {marker}",
+                paragraphs=(f"Проза {marker}",),
+                groups=(Group(f"Метка {marker}", (f"пункт {marker}", "обычный пункт")),),
+            ),
+            Block(heading="Главное", groups=(Group(None, (f"итог {marker}",)),)),
+        ),
+    )
+    return load_summary_json(to_json(dirty))
+
+
+def test_line_break_in_a_list_item_keeps_the_block_structure() -> None:
+    # The reported case: the tail of a multi-line item used to re-parse as prose of the block,
+    # so the item lost half its text and the next render moved it.
+    summary = _normalized(marker="line1\nline2")
+    group = summary.blocks[0].groups[0]
+    assert group.items == ("пункт line1 line2", "обычный пункт")
+    assert summary.blocks[0].paragraphs == ("Проза line1 line2",)  # nothing leaked into the prose
+
+    md = render_markdown(summary)
+    assert "- пункт line1 line2" in md
+    assert render_markdown(parse_summary(md, "medium")) == md
+
+    plain = to_plain(summary)
+    assert "• пункт line1 line2" in plain
+    assert to_plain(parse_plain(plain, "medium")) == plain
+
+
+def test_renders_stay_idempotent_for_every_line_break_shape() -> None:
+    # Both editable forms round-trip exactly, whatever line break the content carried.
+    for marker in _LINE_BREAKS:
+        summary = _normalized(marker=marker)
+        md = render_markdown(summary)
+        assert render_markdown(parse_summary(md, "medium")) == md, f"markdown broke on {marker!r}"
+        plain = to_plain(summary)
+        assert to_plain(parse_plain(plain, "medium")) == plain, f"plain text broke on {marker!r}"
+        assert "\\n" not in to_json(summary), marker  # no escaped line break survives into the .json
     assert parse_summary_text("## Тема встречи\n- пункт", "medium").blocks[0].groups[0].items == ("пункт",)

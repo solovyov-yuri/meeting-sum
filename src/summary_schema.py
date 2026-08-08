@@ -5,6 +5,9 @@ generation. ``parse_summary_json`` validates it and maps it onto the generic ``B
 model with the standard starter labels, so the result is fully editable afterwards. The parser is
 tolerant on shape (missing keys default) but strict on type (malformed → ``SummaryValidationError``,
 so the caller can fall back to the text path).
+
+This module is the only way a string enters the model from outside a line-based parser, so it is
+also where strings are normalised to a single line (see ``_one_line``).
 """
 
 from __future__ import annotations
@@ -71,13 +74,26 @@ def _strip_wrappers(text: str) -> str:
     return text
 
 
+_LINE_BREAK_RE = re.compile(r"\s*[\r\n]+\s*")
+
+
+def _one_line(value: str) -> str:
+    """Collapse embedded line breaks into a single space.
+
+    Every renderer is line-based (one heading, one paragraph, one ``- ``/``• `` item per line), and
+    the parsers read the text back line by line — so a newline inside a string would come back as a
+    *different* block on the next save/export. Normalising here keeps every string in the model
+    single-line by construction, which is what makes the render/parse round-trip exact.
+    """
+    return _LINE_BREAK_RE.sub(" ", value).strip()
+
+
 def _clean_str(value: object) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str):
         raise SummaryValidationError(f"Ожидалась строка, получено {type(value).__name__}")
-    stripped = value.strip()
-    return stripped or None
+    return _one_line(value) or None
 
 
 def _str_list(value: object, where: str) -> tuple[str, ...]:
@@ -89,15 +105,16 @@ def _str_list(value: object, where: str) -> tuple[str, ...]:
     for item in value:
         if not isinstance(item, str):
             raise SummaryValidationError(f"Ожидалась строка в {where}")
-        if item.strip():
-            out.append(item.strip())
+        cleaned = _one_line(item)
+        if cleaned:
+            out.append(cleaned)
     return tuple(out)
 
 
 def _action_text(raw: object) -> str | None:
     """One action → a single display string ('text — owner — due'); owner/due fold into the text."""
     if isinstance(raw, str):
-        return raw.strip() or None
+        return _clean_str(raw)
     if not isinstance(raw, dict):
         raise SummaryValidationError("Элемент actions должен быть объектом или строкой")
     text = _clean_str(raw.get("text"))
