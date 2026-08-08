@@ -992,3 +992,13 @@ def test_force_utf8_io_survives_unreconfigurable_stdin(monkeypatch: pytest.Monke
     desktop_bridge._force_utf8_io()
 
     assert sys.stdin.readline() == "вторая\n"
+
+
+def test_streaming_reports_a_malformed_cancel_flag_instead_of_raising(capsys: pytest.CaptureFixture[str]) -> None:
+    # The warm worker shares this wrapper, so a bad payload must end as an error line, not an
+    # exception that takes the process (and its loaded model) down.
+    rc = desktop_bridge._streaming("run_recap", {"cancel_flag": 42})
+
+    assert rc == 1
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert lines[-1]["type"] == "error"

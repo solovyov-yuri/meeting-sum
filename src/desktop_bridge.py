@@ -820,12 +820,13 @@ def _streaming(command: str, payload: dict[str, Any], **runner_kwargs: Any) -> i
     # Cooperative cancellation (ARCH-002): the Rust host passes the path of a flag file it
     # creates when the user hits "Stop". The workflow polls this between stages and returns a
     # real RunResult("cancelled") — so the transcript pointer and history entry are preserved.
-    # Popped here so it never reaches _build_run_options.
-    cancel_flag = payload.pop("cancel_flag", None)
-    cancel: workflows.CancelCheck | None = Path(cancel_flag).exists if cancel_flag else None
-
+    # Popped inside the boundary below (never reaching _build_run_options) because a malformed
+    # value must become an error line, not an exception: in the warm worker it would take the
+    # process — and the loaded model — down with it.
     runner = _STREAMING_COMMANDS[command]
     try:
+        cancel_flag = payload.pop("cancel_flag", None)
+        cancel: workflows.CancelCheck | None = Path(cancel_flag).exists if cancel_flag else None
         result = runner(payload, emit=emit, cancel=cancel, **runner_kwargs)
     except Exception as exc:  # noqa: BLE001 - boundary: report, never crash silently
         logger.exception("%s failed", command)
