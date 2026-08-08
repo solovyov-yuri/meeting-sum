@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # (pypi package, exact version) — must match pyproject.toml and the frozen build.
 CUDA_PACKAGES: list[tuple[str, str]] = [
     ("nvidia-cublas-cu12", "12.9.2.10"),
-    ("nvidia-cudnn-cu12", "9.22.0.52"),
+    ("nvidia-cudnn-cu12", "9.24.0.43"),
 ]
 
 # Escape hatch for a detection that misfires on an exotic setup: "1"/"0" (also true/yes, false/no)
