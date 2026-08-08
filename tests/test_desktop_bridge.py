@@ -197,9 +197,10 @@ def test_export_summary_subset_formats(tmp_path: Path) -> None:
     assert res["html_path"] is None
 
 
-def test_save_summary_overwrites_legacy_markdown_and_json(tmp_path: Path) -> None:
+def test_save_summary_overwrites_legacy_markdown_and_json(tmp_path: Path, data_dir: Path) -> None:
     summary_path = tmp_path / "meeting_summary.txt"
     summary_path.write_text("старое", encoding="utf-8")
+    desktop_bridge._append_history({"id": "h1", "summary_path": str(summary_path)})
     res = desktop_bridge.save_summary(
         {
             "summary_text": "## Тема встречи\nНовый текст\n\n## Тема: A\n### Решения и задачи\n- сделать",
@@ -220,11 +221,69 @@ def test_save_summary_overwrites_legacy_markdown_and_json(tmp_path: Path) -> Non
     assert data["blocks"][1]["groups"][0]["items"] == ["сделать"]
 
 
-def test_save_summary_missing_dir_raises(tmp_path: Path) -> None:
+def test_save_summary_missing_dir_raises(tmp_path: Path, data_dir: Path) -> None:
+    summary_path = tmp_path / "nope" / "s_summary.txt"
+    desktop_bridge._append_history({"id": "h1", "summary_path": str(summary_path)})
     with pytest.raises(ValueError, match="Каталог не существует"):
-        desktop_bridge.save_summary(
-            {"summary_text": "x", "summary_path": str(tmp_path / "nope" / "s_summary.txt"), "mode": "medium"}
+        desktop_bridge.save_summary({"summary_text": "x", "summary_path": str(summary_path), "mode": "medium"})
+
+
+def test_save_summary_outside_history_denied(tmp_path: Path, data_dir: Path) -> None:
+    # The save target is scoped to summary files the history points at, so the command cannot be
+    # used to write anywhere on disk — including next to a legitimate entry.
+    known = tmp_path / "meeting_summary.txt"
+    desktop_bridge._append_history({"id": "h1", "summary_path": str(known)})
+
+    victim = tmp_path / "startup" / "evil.bat"
+    victim.parent.mkdir()
+    with pytest.raises(ValueError, match="не найден в истории"):
+        desktop_bridge.save_summary({"summary_text": "x", "summary_path": str(victim), "mode": "medium"})
+    assert not victim.exists()
+
+    # …nor via a traversal that normalises to a path outside the allowed set.
+    traversal = tmp_path / "sub" / ".." / "startup" / "evil.bat"
+    (tmp_path / "sub").mkdir()
+    with pytest.raises(ValueError, match="не найден в истории"):
+        desktop_bridge.save_summary({"summary_text": "x", "summary_path": str(traversal), "mode": "medium"})
+    assert not victim.exists()
+
+
+def test_save_summary_denied_when_history_only_references_other_keys(tmp_path: Path, data_dir: Path) -> None:
+    # Only summary_path is writable: a transcript the history points at must not be overwritable
+    # with summary text.
+    transcript = tmp_path / "meeting.txt"
+    transcript.write_text("исходный транскрипт", encoding="utf-8")
+    desktop_bridge._append_history({"id": "h1", "transcript_path": str(transcript)})
+    with pytest.raises(ValueError, match="не найден в истории"):
+        desktop_bridge.save_summary({"summary_text": "x", "summary_path": str(transcript), "mode": "medium"})
+    assert transcript.read_text(encoding="utf-8") == "исходный транскрипт"
+
+
+@pytest.mark.parametrize(
+    "base_name",
+    ["../evil", "..\\..\\evil", "sub/evil", "sub\\evil", "..", ".", "", "   ", "C:evil", "name:stream", "a\x00b"],
+)
+def test_export_summary_rejects_unsafe_base_name(tmp_path: Path, base_name: str) -> None:
+    with pytest.raises(ValueError, match="Недопустимое имя файла"):
+        desktop_bridge.export_summary(
+            {"summary_text": "x", "formats": ["json"], "target_dir": str(tmp_path), "base_name": base_name}
         )
+    # Nothing was written anywhere around the target directory.
+    assert list(tmp_path.rglob("*evil*")) == []
+
+
+def test_export_summary_accepts_ordinary_file_names(tmp_path: Path) -> None:
+    # Base names come from a real audio file stem: spaces, punctuation and non-ASCII must pass.
+    res = desktop_bridge.export_summary(
+        {
+            "summary_text": "x",
+            "formats": ["json"],
+            "target_dir": str(tmp_path),
+            "base_name": "Созвон (2026-07-05) #1 & co",
+        }
+    )
+    assert Path(res["json_path"]) == tmp_path / "Созвон (2026-07-05) #1 & co_summary.json"
+    assert Path(res["json_path"]).exists()
 
 
 # ── run_recap + history ─────────────────────────────────────────────────────────
@@ -259,6 +318,28 @@ def test_run_recap_success_writes_history(tmp_path: Path, patch_factory: None, d
     # History stores references only — never the transcript / summary body.
     assert "transcript_text" not in entry
     assert "summary_text" not in entry
+
+
+def test_save_summary_accepts_the_path_a_run_produced(tmp_path: Path, patch_factory: None, data_dir: Path) -> None:
+    # The live flow: the UI edits the summary of a finished run and saves it back to the very path
+    # the run reported, which the history entry references.
+    audio = tmp_path / "meeting.wav"
+    audio.write_bytes(b"RIFF" + b"\x00" * 32)
+    result = desktop_bridge.run_recap(
+        {
+            "audio_path": str(audio),
+            "transcript_path": str(tmp_path / "tr.txt"),
+            "summary_path": str(tmp_path / "sum.txt"),
+            "overrides": {"provider": "ollama", "mode": "medium"},
+        }
+    )
+    assert result.summary_path is not None
+
+    saved = desktop_bridge.save_summary(
+        {"summary_text": "ТЕМА ВСТРЕЧИ\n\nОтредактировано.", "summary_path": str(result.summary_path), "mode": "medium"}
+    )
+    assert Path(saved["summary_path"]).read_text(encoding="utf-8") == "ТЕМА ВСТРЕЧИ\n\nОтредактировано."
+    assert Path(saved["json_path"]).exists()
 
 
 def test_streaming_cancel_flag_records_cancelled_history(
@@ -622,10 +703,11 @@ def test_read_text_binary_in_scope_handled(data_dir: Path) -> None:
     assert "error" in res
 
 
-def test_save_summary_round_trips_the_plain_text(tmp_path: Path) -> None:
+def test_save_summary_round_trips_the_plain_text(tmp_path: Path, data_dir: Path) -> None:
     # The desktop edits the plain text itself: the .txt keeps it verbatim and the .json is
     # re-derived from it, so a reopened item shows the edits and exports reflect them.
     summary_path = tmp_path / "meeting_summary.txt"
+    desktop_bridge._append_history({"id": "h1", "summary_path": str(summary_path)})
     plain = "ТЕМА ВСТРЕЧИ\n\nНовый текст.\n\n" + "━" * 20 + "\n\nТЕМА: A\n\nРешения и задачи:\n• Сделать."
     res = desktop_bridge.save_summary({"summary_text": plain, "summary_path": str(summary_path), "mode": "medium"})
 

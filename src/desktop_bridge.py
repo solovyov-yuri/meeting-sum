@@ -21,7 +21,7 @@ import sys
 import uuid
 from collections.abc import Iterable, Iterator
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -389,11 +389,14 @@ def get_history() -> dict[str, Any]:
     return {"items": _read_history()}
 
 
-def _history_referenced_paths() -> set[Path]:
+_RESULT_PATH_KEYS = ("transcript_path", "summary_path", "summary_json_path")
+
+
+def _history_referenced_paths(keys: tuple[str, ...] = _RESULT_PATH_KEYS) -> set[Path]:
     """Resolved result-file paths the history legitimately points at."""
     allowed: set[Path] = set()
     for it in _read_history():
-        for key in ("transcript_path", "summary_path", "summary_json_path"):
+        for key in keys:
             value = it.get(key)
             if value:
                 with contextlib.suppress(OSError):
@@ -413,6 +416,40 @@ def _is_readable_path(p: Path) -> bool:
     if resolved == data or data in resolved.parents:
         return True
     return resolved in _history_referenced_paths()
+
+
+def _is_writable_summary_path(p: Path) -> bool:
+    """Saving an edited summary may only overwrite the summary file of an existing history entry —
+    exactly the path the UI hands back after a run or when reopening an entry. Deliberately
+    narrower than the read scope: the app data dir stays read-only here, because it holds
+    ``config.yaml`` and ``history.json``, which no webview-supplied path may clobber."""
+    try:
+        resolved = p.resolve()
+    except OSError:
+        return False
+    return resolved in _history_referenced_paths(("summary_path",))
+
+
+def _safe_base_name(raw: Any) -> str:
+    """Validate the export base name: file names are built by concatenating it with a suffix, so it
+    must stay a single, plain path component and never steer the write out of the target directory.
+
+    Checked against both path flavours rather than only the host's, plus an explicit ``:`` — on
+    Windows that introduces a drive-relative path or an alternate data stream, and ``ntpath`` does
+    not treat it as a separator. Characters that are merely illegal in a Windows file name are left
+    alone: they are legal on POSIX and a bad one just fails the write.
+    """
+    name = raw.strip() if isinstance(raw, str) else ""
+    if (
+        not name
+        or name in {".", ".."}
+        or ":" in name
+        or any(ch < " " or ch == "\x7f" for ch in name)
+        or name != PurePosixPath(name).name
+        or name != PureWindowsPath(name).name
+    ):
+        raise ValueError(f"Недопустимое имя файла для экспорта: {raw!r}")
+    return name
 
 
 def read_text(path: str | None) -> dict[str, Any]:
@@ -452,11 +489,12 @@ def export_summary(payload: dict[str, Any]) -> dict[str, Any]:
 
     formats = payload.get("formats") or ["markdown", "plain", "html", "json"]
     target_dir = Path(payload["target_dir"])
-    base_name = payload["base_name"]
+    # Both inputs come from the webview, and both are constrained so the four writes below stay
+    # inside the chosen directory: the base name must be a plain file-name component, and the
+    # directory itself must already exist (SEC-003 — no arbitrary directory trees are created).
+    base_name = _safe_base_name(payload["base_name"])
     mode = payload.get("mode") or "medium"
 
-    # SEC-003: export only into an existing directory (the save dialog returns one); do not
-    # create arbitrary directory trees at a webview-supplied path.
     if not target_dir.is_dir():
         raise ValueError(f"Каталог для экспорта не существует: {target_dir}")
 
@@ -552,13 +590,18 @@ def save_summary(payload: dict[str, Any]) -> dict[str, Any]:
     """Persist the edited summary: overwrite the canonical ``.txt`` and re-derive the structured
     ``.json`` from it (parse → object → JSON). Mirrors what a run writes, so reopening the history
     item reflects the edits. The text is the plain-text form; ``parse_summary_text`` still accepts
-    the Markdown written by pre-plain-text runs."""
+    the Markdown written by pre-plain-text runs.
+
+    The target is restricted to a summary file the history points at, so this command cannot be
+    turned into a write to an arbitrary location on disk."""
     from formatters import parse_summary_text, to_json  # noqa: PLC0415
 
     summary_text = payload["summary_text"]
     summary_path = Path(payload["summary_path"])
     mode = payload.get("mode") or "medium"
 
+    if not _is_writable_summary_path(summary_path):
+        raise ValueError(f"Файл саммари не найден в истории запусков: {summary_path}")
     if not summary_path.parent.is_dir():
         raise ValueError(f"Каталог не существует: {summary_path.parent}")
 
