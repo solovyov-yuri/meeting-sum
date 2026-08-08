@@ -239,6 +239,43 @@ def test_preprocess_audio_output_path_is_last_arg(tmp_path: Path) -> None:
     assert cmd[-1] == str(output)
 
 
+def test_preprocess_audio_uses_nostdin_and_devnull(tmp_path: Path) -> None:
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"\x00" * 16)
+    output = tmp_path / "out.wav"
+    settings = _settings()
+
+    captured: list[list[str]] = []
+    captured_kwargs: list[dict[str, object]] = []
+
+    def fake_run(cmd: list[str], **kwargs: object) -> MagicMock:
+        captured.append(list(cmd))
+        captured_kwargs.append(kwargs)
+        return MagicMock(returncode=0)
+
+    with patch("subprocess.run", fake_run):
+        preprocess_audio(audio, output, settings)
+
+    cmd = captured[0]
+    assert "-nostdin" in cmd
+    assert captured_kwargs[0]["stdin"] is subprocess.DEVNULL
+    assert captured_kwargs[0]["timeout"] is not None
+
+
+def test_preprocess_audio_timeout_raises_preprocessing_error(tmp_path: Path) -> None:
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"\x00" * 16)
+    output = tmp_path / "out.wav"
+    settings = _settings()
+
+    def fake_run(cmd: list[str], **kwargs: object) -> None:
+        raise subprocess.TimeoutExpired(cmd, timeout=1)
+
+    with patch("subprocess.run", fake_run):
+        with pytest.raises(PreprocessingError, match="timed out"):
+            preprocess_audio(audio, output, settings)
+
+
 def test_preprocess_audio_contains_required_args(tmp_path: Path) -> None:
     audio = tmp_path / "audio.wav"
     audio.write_bytes(b"\x00" * 16)

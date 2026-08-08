@@ -1,0 +1,450 @@
+# Tauri <-> Python bridge contract
+
+## 1. Цель bridge
+
+Bridge дает Tauri frontend доступ к существующей Python-логике Recap без shell-first архитектуры. CLI остается поддерживаемым, но desktop не должен парсить human-oriented stdout/stderr как основной контракт.
+
+Bridge должен быть JSON-friendly и устойчивым к долгим задачам.
+
+## 2. Рекомендуемые Python-модели
+
+```python
+@dataclass(frozen=True)
+class RunOptions:
+    audio_path: Path | None = None
+    transcript_path: Path | None = None
+    summary_path: Path | None = None
+    transcription_language: str | None = None
+    summary_language: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    mode: str | None = None
+
+
+@dataclass(frozen=True)
+class ProgressEvent:
+    step: str
+    status: str
+    message: str
+    percent: float | None = None
+    path: Path | None = None
+
+
+@dataclass(frozen=True)
+class RunResult:
+    status: str
+    transcript_path: Path | None
+    summary_path: Path | None
+    summary_json_path: Path | None
+    transcript_text: str | None
+    summary_text: str | None
+    error_message: str | None = None
+    output_path: Path | None = None  # preprocess-only: the produced *.preprocessed.wav
+```
+
+Допустимые `step`:
+
+- `preprocess`;
+- `transcribe`;
+- `summarize`;
+- `export`.
+
+Допустимые `status` для event:
+
+- `pending`;
+- `running`;
+- `success`;
+- `warning`;
+- `error`;
+- `cancelled`.
+
+Допустимые `RunResult.status`:
+
+- `success`;
+- `partial_success`;
+- `failed`;
+- `cancelled`.
+
+## 3. Python workflow API
+
+Минимальный API:
+
+```python
+def run_one_file(
+    options: RunOptions,
+    *,
+    progress: Callable[[ProgressEvent], None] | None = None,
+) -> RunResult:
+    ...
+```
+
+Требования:
+
+- загружать `Settings.load()`;
+- применять overrides из `RunOptions`;
+- использовать `providers.factory.make_transcriber()` и `make_summarizer()`;
+- использовать `prepared_audio()`;
+- записывать transcript до LLM;
+- возвращать `partial_success`, если transcript записан, но summarization failed;
+- все файловые записи делать через `write_text_atomic()`;
+- не ловить исключения слишком широко внутри низкоуровневых provider-функций.
+
+## 4. Desktop bridge commands
+
+Tauri commands могут быть реализованы напрямую в Rust с вызовом Python-процесса/bridge, либо через выбранный IPC-механизм. Для frontend контракт должен выглядеть так:
+
+### `get_settings`
+
+Input:
+
+```json
+{}
+```
+
+Output:
+
+```json
+{
+  "audio": "data/meeting.wav",
+  "transcript": "data/transcript.txt",
+  "summary": "data/summary.txt",
+  "privacy_ack": false,
+  "transcription": {
+    "language": "ru",
+    "model": {
+      "provider": "faster-whisper",
+      "name": "large-v3",
+      "device": "cuda",
+      "compute_type": "default",
+      "beam_size": 5,
+      "vad_filter": true,
+      "condition_on_previous_text": true
+    }
+  },
+  "summarization": {
+    "language": null,
+    "mode": "medium",
+    "max_transcript_chars": 60000,
+    "timeout_seconds": 60.0,
+    "retries": 2,
+    "chunking_mode": "chunk",
+    "model": {
+      "provider": "ollama",
+      "name": "qwen3.5:latest",
+      "api_key_configured": false,
+      "base_url": null,
+      "num_ctx": null
+    }
+  },
+  "preprocessing": {
+    "enabled": false,
+    "sample_rate": 16000,
+    "channels": 1,
+    "codec": "pcm_s16le",
+    "loudness_normalization": false,
+    "target_lufs": -16.0,
+    "true_peak_db": -1.5,
+    "loudness_range": 11.0,
+    "highpass_hz": null,
+    "keep_temp": false
+  }
+}
+```
+
+Важно: `api_key` не возвращать открытым текстом.
+
+### `save_settings`
+
+Input: nested config object без `api_key`.
+
+Output:
+
+```json
+{ "ok": true }
+```
+
+Требования:
+
+- сохранять только известные schema keys;
+- перед записью прогонять validation через `Settings.load()` или эквивалентную проверку;
+- не писать secrets в `config.yaml`.
+
+### `set_api_key`
+
+Input:
+
+```json
+{
+  "provider": "openai",
+  "api_key": "..."
+}
+```
+
+Output:
+
+```json
+{ "ok": true }
+```
+
+Требования:
+
+- хранить ключ через Windows Credential Manager / keychain;
+- не логировать ключ;
+- не возвращать ключ frontend после сохранения.
+
+### `delete_api_key`
+
+Input:
+
+```json
+{ "provider": "openai" }
+```
+
+Output:
+
+```json
+{ "ok": true }
+```
+
+### `run_recap`
+
+Input:
+
+```json
+{
+  "run_mode": "full",
+  "audio_path": "C:/meetings/meeting.mp3",
+  "transcript_path": null,
+  "summary_path": null,
+  "overrides": {
+    "transcription_language": "ru",
+    "summary_language": "ru",
+    "provider": "ollama",
+    "model": "qwen3.5:latest",
+    "mode": "medium"
+  }
+}
+```
+
+`run_mode` selects the pipeline slice (default `"full"`) — **distinct from `overrides.mode`**, which is
+the *summary* mode (brief/medium/detailed):
+
+- `"full"` — preprocess (forced on) → transcribe → summarize → export.
+- `"transcribe"` — preprocess → transcribe only; returns `success` with the transcript written and no
+  summary (empty transcript is success-with-warning). No summarization key required.
+- `"preprocess"` — ffmpeg only; writes `<output_dir|audio-dir>/<stem>.preprocessed.wav`, returned on
+  `output_path` and the success event's `path`. `audio_path` is required for these three.
+- Standalone `"summarize"` is the separate `resummarize` command (input is a transcript, not audio).
+
+Progress events:
+
+```json
+{
+  "step": "transcribe",
+  "status": "running",
+  "message": "Транскрибация началась",
+  "percent": null,
+  "path": null
+}
+```
+
+Final output:
+
+```json
+{
+  "status": "success",
+  "transcript_path": "C:/.../transcript.txt",
+  "summary_path": "C:/.../summary.txt",
+  "summary_json_path": "C:/.../summary.json",
+  "transcript_text": "...",
+  "summary_text": "...",
+  "error_message": null,
+  "output_path": null
+}
+```
+
+`output_path` is set only by `run_mode: "preprocess"` (the produced `*.preprocessed.wav`); otherwise null.
+
+### `serve` — persistent warm-model worker (PERF-001)
+
+To avoid reloading the Whisper model (~10–60 s for large-v3) on every run, the Rust host does **not**
+spawn a fresh process per `run_recap`. Instead it keeps one `recap-bridge serve` process alive and
+routes runs through it:
+
+- `serve` reads **one JSON run-request per line** on stdin and, per run, streams the same framing as
+  `run_recap` (`{"type":"progress"}` events then a terminal `{"type":"result"}` / `{"type":"error"}`
+  line). Its stdout stays open between runs — the host reads until the terminal line, not EOF.
+- The worker caches exactly one transcriber, keyed on the transcription model fields; changing the
+  model drops the old one (freeing GPU memory) before building the new.
+- Runs are serialised by the host (a mutex), so `serve` only ever handles one request at a time.
+- **Fallback:** if the worker fails to spawn or its pipe breaks, the host falls back to a fresh
+  spawn-per-call `run_recap` — slow (model reloads) but correct.
+- Only `run_recap` uses the worker. `resummarize` is LLM-only (no model) and stays spawn-per-call.
+
+### `resummarize`
+
+**Streaming** (second NDJSON channel besides `run_recap`). Re-runs only summarization on an existing
+transcript — the partial_success recovery path («Повторить суммаризацию»); never re-transcribes.
+
+Input: same shape as `run_recap`, but `transcript_path` must point at an existing transcript on disk
+(`audio_path` is carried for history metadata only, not read). Progress events and the final output
+object are identical to `run_recap`.
+
+### `export_summary`
+
+Input:
+
+```json
+{
+  "summary_json_path": "C:/.../meeting_2026_06_19_summary.json",
+  "summary_text": "...edited plain text; Markdown from pre-plain entries (fallback if no/empty base json)...",
+  "formats": ["markdown", "plain", "html", "json"],
+  "target_dir": "C:/meetings/output",
+  "base_name": "meeting_2026_06_19",
+  "mode": "medium"
+}
+```
+
+Output:
+
+```json
+{
+  "markdown_path": "C:/.../meeting_2026_06_19_summary.md",
+  "plain_path": "C:/.../meeting_2026_06_19_summary_plain.txt",
+  "html_path": "C:/.../meeting_2026_06_19_summary.html",
+  "json_path": "C:/.../meeting_2026_06_19_summary.json"
+}
+```
+
+### `get_history`
+
+Output:
+
+```json
+{
+  "items": []
+}
+```
+
+### `delete_history_item`
+
+Input:
+
+```json
+{ "id": "uuid" }
+```
+
+Output:
+
+```json
+{ "ok": true }
+```
+
+Удаляет только запись истории, не файлы.
+
+### `test_connection`
+
+Проверяет доступность LLM-провайдера с сохранёнными настройками/ключом.
+
+Input:
+
+```json
+{ "provider": "openai" }
+```
+
+Output:
+
+```json
+{ "ok": true, "message": "Подключение успешно." }
+```
+
+### `list_models`
+
+Запрашивает список моделей у провайдера через OpenAI-совместимый `GET /v1/models` (реальный
+сетевой вызов с коротким таймаутом). Никогда не бросает — при любой ошибке (офлайн, нет ключа,
+сервер недоступен) возвращает пустой список и текст ошибки, а UI откатывается к ручному вводу.
+Base URL разрешается по логике CODE-005 (доверяем сохранённому base_url только для того же
+провайдера, иначе — пресет).
+
+Input:
+
+```json
+{ "provider": "openai" }
+```
+
+Output:
+
+```json
+{ "models": ["gpt-4o", "gpt-4o-mini"], "error": null }
+```
+
+### `read_text`
+
+Читает файл результата с диска (используется, чтобы заново открыть запись истории). Отсутствующий
+файл — не ошибка.
+
+Input:
+
+```json
+{ "path": "C:/.../summary.txt" }
+```
+
+Output:
+
+```json
+{ "text": "...", "exists": true }
+```
+
+Отсутствующий файл: `{ "text": null, "exists": false }`; ошибка чтения добавляет `"error"`.
+
+## 5. Secrets
+
+Для Python можно рассмотреть пакет `keyring`. Для Tauri/Rust можно рассмотреть plugin/store или Rust crate, который работает с Windows Credential Manager.
+
+Требования независимо от реализации:
+
+- secrets не должны попадать в `config.yaml`;
+- secrets не должны попадать в history JSON;
+- secrets не должны попадать в логи;
+- UI показывает только masked state: `ключ сохранен` / `ключ не сохранен`.
+
+## 6. Отмена выполнения
+
+Для MVP cancel можно сделать best-effort:
+
+- frontend показывает `Остановить`;
+- bridge выставляет cancellation flag;
+- workflow проверяет flag между этапами.
+
+Полное прерывание faster-whisper внутри текущего вызова не обязательно для MVP, если это явно описано в UI:
+
+```text
+Остановка произойдет после завершения текущего этапа.
+```
+
+### Реализация (ARCH-002)
+
+Отмена кооперативная, через flag-файл — процесс bridge **не** убивается:
+
+- на каждый `run_recap`/`resummarize` Rust генерирует уникальный путь и передаёт его в payload
+  как `cancel_flag` (ключ съедается мостом в `_streaming`, до сборки `RunOptions`);
+- по нажатию `Остановить` (`cancel_run`) watcher-поток в Rust создаёт этот файл;
+- `_streaming` строит `cancel = Path(cancel_flag).exists` и передаёт в `run_one_file`, который
+  проверяет флаг между этапами и возвращает `RunResult("cancelled", …)` — с сохранённым
+  `transcript_path`, если транскрипт уже записан;
+- Rust дочитывает stdout до реального `result` (не синтезирует `cancelled` сам), поэтому отменённый
+  запуск попадает в историю со статусом `cancelled` и указателем на транскрипт;
+- так как процесс не убит, `finally` в Python отрабатывает — временный WAV удаляется, ffmpeg не
+  висит. Rust удаляет flag-файл по завершении запуска.
+
+Ограничение: во время самого этапа транскрибации (долгий, без прогресс-строк) отмена срабатывает
+только на его границе — это и есть текст предупреждения выше.
+
+## 7. Logging
+
+Bridge должен различать:
+
+- user-facing event message;
+- technical details for logs.
+
+Frontend показывает короткие сообщения. Детальные exception strings можно хранить в log tab, но не показывать как главный error copy.
