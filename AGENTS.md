@@ -41,10 +41,23 @@ npm run build         # tsc --noEmit && vite build
 `npm run lint|test|build`; and the **Windows Rust toolchain** via `/mnt/c/Users/solov/.cargo/bin/cargo.exe`
 — `cargo.exe check` and `cargo.exe clippy` on `desktop/src-tauri` compile and lint the Rust in ~5s
 (deps are cached in `target/`). So a Rust change CAN be checked for compile/lint errors here — do it, don't
-assume you can't. What you CANNOT do here: actually run the GUI (`npm run tauri dev`, `tauri build`, launching
-the app) or GPU transcription — those need the user on Windows (PowerShell), output pasted back. So: Rust
+assume you can't. The *pipeline* is runnable here too — see "Desktop runtime debugging" below; it is the GPU
+that isn't. What you CANNOT do here: actually run the GUI (`npm run tauri dev`, `tauri build`, launching
+the app) or CUDA transcription — those need the user on Windows (PowerShell), output pasted back. So: Rust
 *compilation* is verifiable by you; Rust *runtime behaviour* (e.g. cancel actually stops a run, no console
 window flashes) stays **unverified until the user runs the app**.
+
+**Desktop runtime debugging.** When the desktop pipeline misbehaves, in this order:
+
+1. **Read the bridge log first** — `/mnt/c/Users/solov/AppData/Roaming/app.recap.desktop/logs/recap-bridge.log`
+   is plain-readable from WSL. Skipping it once cost several "fixed → still broken" rounds.
+2. **Reproduce the run from WSL**, no GUI needed: drive `desktop_bridge serve` as a subprocess with the
+   venv python, `RECAP_DESKTOP_DATA_DIR` pointing at a scratch dir holding its own `config.yaml`
+   (`model: tiny`, `device: cpu`). Real transcription does run this way.
+3. Two traps: **env vars do not cross WSL → Windows** — set them inside the driver script, not in the
+   shell; and the Windows **NUL device reports `isatty() = True`**, so a null stderr looks like a
+   terminal to libraries that redirect on that signal (this is what once swallowed progress output).
+4. Windows process inspection works from here: `tasklist.exe`, `powershell.exe Get-CimInstance Win32_Process`.
 
 **Honesty about verification.** Never claim a check passed unless you actually ran it in this session. If a
 check is impossible here (Rust/Tauri build, GPU transcription, a live LLM endpoint), say so explicitly and
