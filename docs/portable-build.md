@@ -12,6 +12,7 @@ dist/portable/Recap/
 ├── recap-bridge/        # frozen Python sidecar (PyInstaller one-dir)
 │   ├── recap-bridge.exe
 │   └── _internal/       # Python runtime + deps (NO CUDA — ~400 MB)
+├── ffmpeg.exe           # optional, only with -Ffmpeg (see Caveats)
 └── WebView2Loader.dll   # if produced by the build
 ```
 …plus `dist/portable/Recap-<version>-portable.zip`.
@@ -60,8 +61,11 @@ automatically:
 
 ## Caveats
 - **ffmpeg.** Full-mode preprocessing shells out to `ffmpeg`. The portable build does **not** bundle
-  it by default — either have `ffmpeg` on `PATH`, or pass `-Ffmpeg <path>` and add the portable
-  folder to `PATH`. Transcription-only runs don't need ffmpeg.
+  it by default — either have `ffmpeg` on `PATH`, or pass `-Ffmpeg <path>` at build time. A copy
+  placed that way is picked up automatically, with no `PATH` edit: in a frozen build
+  `preprocessing._resolve_ffmpeg()` looks for `ffmpeg.exe` next to the bridge executable and next to
+  `Recap.exe` before falling back to the bare `ffmpeg` (i.e. to a system install on `PATH`).
+  Transcription-only runs don't need ffmpeg.
 - **First run** still downloads the selected Whisper model (network required once), cached under the
   user profile like a normal install.
 - **API keys** live in the Windows Credential Manager (keyring), same as an installed build — they
@@ -72,6 +76,8 @@ automatically:
 The deterministic parts are tested here (`cuda_support` dir/marker/extract logic; the Rust and Python
 plumbing compiles and passes the full pytest suite + lint + types). But the parts that only exist at runtime on
 Windows are **unverified from this environment**: the PyInstaller freeze (hidden imports may need
-tuning), the actual GPU CUDA download + dlopen, and the packaged exe launching the bundled bridge.
+tuning), the actual GPU CUDA download + dlopen, the packaged exe launching the bundled bridge, and
+the bundled-ffmpeg pickup against a real `-Ffmpeg` build (its resolution logic is unit-tested with a
+faked frozen layout, but never exercised on an assembled folder).
 Treat the first `build-portable.ps1` run — and the first GPU download from Settings — as the real
 integration tests.

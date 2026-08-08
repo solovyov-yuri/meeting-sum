@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -421,6 +423,78 @@ def test_prepared_audio_delegates_to_preprocess_audio(tmp_path: Path) -> None:
             assert calls[0][0] == audio
             assert calls[0][2] is settings
             assert result == calls[0][1]
+
+
+# ── ffmpeg resolution ────────────────────────────────────────────────────────
+
+_EXE = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+
+
+def _captured_ffmpeg(tmp_path: Path) -> str:
+    """Run preprocess_audio with a stubbed subprocess and return the resolved ffmpeg argv[0]."""
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"\x00" * 16)
+    captured: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **kwargs: object) -> MagicMock:
+        captured.append(list(cmd))
+        return MagicMock(returncode=0)
+
+    with patch("subprocess.run", fake_run):
+        preprocess_audio(audio, tmp_path / "out.wav", _settings())
+    return captured[0][0]
+
+
+def _fake_app_layout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, frozen: bool = True
+) -> Path:
+    """Fake the portable layout: <app>/recap-bridge/recap-bridge.exe. Returns the app dir."""
+    app_dir = tmp_path / "app"
+    bridge_dir = app_dir / "recap-bridge"
+    bridge_dir.mkdir(parents=True)
+    exe = bridge_dir / ("recap-bridge.exe" if os.name == "nt" else "recap-bridge")
+    exe.write_bytes(b"")
+    monkeypatch.setattr(sys, "executable", str(exe))
+    if frozen:
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+    else:
+        monkeypatch.delattr(sys, "frozen", raising=False)
+    return app_dir
+
+
+def test_frozen_uses_ffmpeg_next_to_app_exe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app_dir = _fake_app_layout(tmp_path, monkeypatch)
+    bundled = app_dir / _EXE
+    bundled.write_bytes(b"")
+    monkeypatch.setenv("PATH", "")
+
+    assert _captured_ffmpeg(tmp_path) == str(bundled)
+
+
+def test_frozen_uses_ffmpeg_next_to_the_bridge_exe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app_dir = _fake_app_layout(tmp_path, monkeypatch)
+    bundled = app_dir / "recap-bridge" / _EXE
+    bundled.write_bytes(b"")
+    monkeypatch.setenv("PATH", "")
+
+    assert _captured_ffmpeg(tmp_path) == str(bundled)
+
+
+def test_frozen_without_bundled_ffmpeg_falls_back_to_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_app_layout(tmp_path, monkeypatch)
+
+    assert _captured_ffmpeg(tmp_path) == "ffmpeg"
+
+
+def test_not_frozen_always_uses_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app_dir = _fake_app_layout(tmp_path, monkeypatch, frozen=False)
+    (app_dir / _EXE).write_bytes(b"")
+
+    assert _captured_ffmpeg(tmp_path) == "ffmpeg"
 
 
 def test_temp_file_deleted_even_on_exception(tmp_path: Path) -> None:

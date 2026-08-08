@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -11,14 +13,34 @@ from config import PreprocessingSettings
 # Upper bound on ffmpeg runtime so a stuck process cannot hang the CLI forever.
 FFMPEG_TIMEOUT_SECONDS = 3600
 
+_FFMPEG_NAMES = ("ffmpeg.exe",) if os.name == "nt" else ("ffmpeg",)
+
 
 class PreprocessingError(RuntimeError):
     pass
 
 
+def _resolve_ffmpeg() -> str:
+    """Return the ffmpeg to run: one shipped with the app if present, else the bare name.
+
+    In the portable (PyInstaller) build the executable lives in ``<app>/recap-bridge/`` while an
+    ffmpeg shipped with it sits next to the app executable one level up — a directory the OS does
+    not search, so a bare ``ffmpeg`` would miss it. Falling back to the bare name keeps the normal
+    case (a system ffmpeg on PATH) resolved by the OS exactly as before.
+    """
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        for directory in (exe_dir, exe_dir.parent):
+            for name in _FFMPEG_NAMES:
+                candidate = directory / name
+                if candidate.is_file():
+                    return str(candidate)
+    return "ffmpeg"
+
+
 def _build_cmd(audio: Path, output: Path, settings: PreprocessingSettings) -> list[str]:
     cmd = [
-        "ffmpeg", "-nostdin", "-y", "-i", str(audio),
+        _resolve_ffmpeg(), "-nostdin", "-y", "-i", str(audio),
         "-ac", str(settings.channels),
         "-ar", str(settings.sample_rate),
         "-c:a", settings.codec,
