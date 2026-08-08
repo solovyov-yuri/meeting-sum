@@ -59,7 +59,7 @@ def _force_utf8_io() -> None:
         if reconfigure is not None:
             try:
                 reconfigure(encoding="utf-8")
-            except (ValueError, OSError):  # pragma: no cover - stream not reconfigurable
+            except (ValueError, OSError):  # stream not reconfigurable (e.g. already read from)
                 pass
 
 
@@ -553,8 +553,6 @@ def check_model() -> dict[str, Any]:
     Only Ollama can pull models; for other providers (and when Ollama is unreachable) this returns
     ``installed: True`` so the run proceeds and surfaces any real error itself.
     """
-    from config import PROVIDER_PRESETS  # noqa: PLC0415
-
     settings = _load_settings()
     model_cfg = settings.summarization.model
     provider = model_cfg.provider
@@ -798,7 +796,13 @@ _STREAMING_COMMANDS = {
 }
 
 
-def _streaming(command: str, payload: dict[str, Any]) -> int:
+def _streaming(command: str, payload: dict[str, Any], **runner_kwargs: Any) -> int:
+    """Run one streaming request and emit its framing: progress lines, then exactly one terminal
+    ``result``/``error`` line (the Rust host reads until that line). Shared by the spawn-per-call
+    entry point and the persistent worker — ``runner_kwargs`` carries what only the latter passes
+    (``transcriber_factory``), so both paths keep identical cancellation and error handling.
+    """
+
     def emit(event: workflows.ProgressEvent) -> None:
         _emit_line({"type": "progress", "event": _event_to_dict(event)})
 
@@ -811,7 +815,7 @@ def _streaming(command: str, payload: dict[str, Any]) -> int:
 
     runner = _STREAMING_COMMANDS[command]
     try:
-        result = runner(payload, emit=emit, cancel=cancel)
+        result = runner(payload, emit=emit, cancel=cancel, **runner_kwargs)
     except Exception as exc:  # noqa: BLE001 - boundary: report, never crash silently
         logger.exception("%s failed", command)
         _emit_line({"type": "error", "error": workflows.humanize_error(exc)})
@@ -829,10 +833,11 @@ def _transcriber_key(settings: Settings) -> tuple[Any, ...]:
 def serve(lines: Iterable[str] | None = None) -> int:
     """Persistent worker (PERF-001): keep the Whisper model warm across ``run_recap`` requests.
 
-    Reads one JSON run-request per line from stdin and streams, per run, the same framing as
-    ``_streaming``: ``{"type":"progress"}`` events then a terminal ``{"type":"result"}`` /
-    ``{"type":"error"}`` line (the Rust host reads until that terminal line and keeps the pipe
-    open). Only ``run_recap`` is served here — ``resummarize`` is LLM-only and stays spawn-per-call.
+    Reads one JSON run-request per line from stdin and hands each to ``_streaming``, so a run here
+    streams exactly the framing of a spawn-per-call one: ``{"type":"progress"}`` events then a
+    terminal ``{"type":"result"}`` / ``{"type":"error"}`` line (the Rust host reads until that
+    terminal line and keeps the pipe open). Only ``run_recap`` is served here — ``resummarize`` is
+    LLM-only and stays spawn-per-call.
 
     At most one transcriber is cached; a change to the transcription model drops the old one
     (freeing GPU memory) before building the new.
@@ -850,9 +855,6 @@ def serve(lines: Iterable[str] | None = None) -> int:
             cache[key] = make_transcriber(settings)
         return cache[key]
 
-    def emit(event: workflows.ProgressEvent) -> None:
-        _emit_line({"type": "progress", "event": _event_to_dict(event)})
-
     for raw in lines if lines is not None else sys.stdin:
         line = raw.strip()
         if not line:
@@ -862,15 +864,9 @@ def serve(lines: Iterable[str] | None = None) -> int:
         except json.JSONDecodeError as exc:
             _emit_line({"type": "error", "error": f"Некорректный JSON: {exc}"})
             continue
-        cancel_flag = payload.pop("cancel_flag", None)
-        cancel: workflows.CancelCheck | None = Path(cancel_flag).exists if cancel_flag else None
-        try:
-            result = run_recap(payload, emit=emit, cancel=cancel, transcriber_factory=factory)
-        except Exception as exc:  # noqa: BLE001 - boundary: report, never crash the worker
-            logger.exception("serve run failed")
-            _emit_line({"type": "error", "error": workflows.humanize_error(exc)})
-            continue
-        _emit_line({"type": "result", "result": _result_to_dict(result)})
+        # Same framing and error boundary as the spawn-per-call path; a failed run emits its error
+        # line there and the worker simply moves on to the next request.
+        _streaming("run_recap", payload, transcriber_factory=factory)
     return 0
 
 

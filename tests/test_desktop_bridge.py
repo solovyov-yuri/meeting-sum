@@ -576,6 +576,92 @@ def test_serve_reuses_transcriber_across_runs(
     assert len(desktop_bridge.get_history()["items"]) == 2  # both runs completed + recorded
 
 
+def _terminal_lines(out: str) -> list[dict]:
+    """The framing the Rust host relies on: one `result`/`error` line ends each request."""
+    return [obj for obj in (json.loads(line) for line in out.splitlines() if line.strip()) if obj["type"] != "progress"]
+
+
+def test_serve_cancel_flag_records_cancelled_history(
+    tmp_path: Path, data_dir: Path, patch_factory: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The worker path honours the cancel flag exactly like the spawn-per-call one, and still
+    # closes the request with a single terminal `result` line.
+    import logging
+
+    audio = tmp_path / "meeting.wav"
+    audio.write_bytes(b"RIFF" + b"\x00" * 32)
+    flag = tmp_path / "cancel.flag"
+    flag.write_text("x", encoding="utf-8")
+    request = json.dumps(
+        {
+            "audio_path": str(audio),
+            "transcript_path": str(tmp_path / "tr.txt"),
+            "summary_path": str(tmp_path / "sum.txt"),
+            "overrides": {"provider": "ollama", "mode": "medium"},
+            "cancel_flag": str(flag),
+        }
+    )
+
+    saved = logging.getLogger().handlers[:]
+    try:
+        assert desktop_bridge.serve([request]) == 0
+    finally:
+        root = logging.getLogger()
+        root.handlers.clear()
+        root.handlers.extend(saved)
+
+    terminal = _terminal_lines(capsys.readouterr().out)
+    assert len(terminal) == 1
+    assert terminal[0]["type"] == "result"
+    assert terminal[0]["result"]["status"] == "cancelled"
+    assert [item["status"] for item in desktop_bridge.get_history()["items"]] == ["cancelled"]
+
+
+def test_serve_survives_failing_run_and_serves_the_next(
+    tmp_path: Path, data_dir: Path, patch_factory: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A run that raises outside the workflow (here: an unreadable config.yaml) must produce one
+    # terminal `error` line and leave the worker alive — the host reads one terminal line per
+    # request, so a missing, doubled or crash-swallowed line desyncs it.
+    import logging
+    from collections.abc import Iterator
+
+    config_path = data_dir / "config.yaml"
+
+    def make_req(i: int) -> str:
+        audio = tmp_path / f"m{i}.wav"
+        audio.write_bytes(b"RIFF" + b"\x00" * 32)
+        return json.dumps(
+            {
+                "audio_path": str(audio),
+                "transcript_path": str(tmp_path / f"tr{i}.txt"),
+                "summary_path": str(tmp_path / f"sum{i}.txt"),
+                "overrides": {"provider": "ollama", "mode": "medium"},
+            }
+        )
+
+    def requests() -> Iterator[str]:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text("совсем_не_ключ: 1\n", encoding="utf-8")
+        yield make_req(1)
+        config_path.unlink()  # back to defaults for the second request
+        yield ""  # blank lines are skipped, not answered
+        yield make_req(2)
+
+    saved = logging.getLogger().handlers[:]
+    try:
+        assert desktop_bridge.serve(requests()) == 0
+    finally:
+        root = logging.getLogger()
+        root.handlers.clear()
+        root.handlers.extend(saved)
+
+    terminal = _terminal_lines(capsys.readouterr().out)
+    assert [obj["type"] for obj in terminal] == ["error", "result"]
+    assert terminal[1]["result"]["status"] == "success"
+    assert len(desktop_bridge.get_history()["items"]) == 1  # only the run that got past config load
+
+
 def test_history_append_delete_under_lock(data_dir: Path) -> None:
     # REL-006: append/delete run under a cross-process file lock; sequential ops must still
     # round-trip correctly (and the lock must be re-acquirable across calls).
@@ -848,7 +934,7 @@ def test_force_utf8_io_covers_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_force_utf8_io_survives_unreconfigurable_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Already-read stdin refuses the encoding change (io.UnsupportedOperation) — must not crash.
+    # An already-read stream raises io.UnsupportedOperation on reconfigure — swallow it, stay usable.
     import io
     import sys
 
