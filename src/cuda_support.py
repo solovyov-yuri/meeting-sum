@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import sys
 import tempfile
 import urllib.request
@@ -91,18 +92,31 @@ def _resolve_win_wheel(pkg: str, version: str) -> tuple[str, str, int]:
     raise RuntimeError(f"Не найден win_amd64 wheel для {pkg}=={version}")
 
 
-def _extract_dlls(whl_path: Path, dest: Path) -> int:
-    """Extract only ``nvidia/**/bin/*.dll`` members from a wheel into ``dest``. Returns DLL count."""
+def _extract_dlls(whl_path: Path, dest: Path, check_cancel: Callable[[], None] | None = None) -> int:
+    """Extract only ``nvidia/**/bin/*.dll`` members from a wheel into ``dest``. Returns DLL count.
+
+    Every member name is validated before anything is created: ``..`` segments, backslash separators
+    and any name that resolves outside ``dest`` are refused, so a crafted wheel cannot drop a DLL
+    somewhere else on disk. Members are copied in chunks — a single cuDNN/cuBLAS DLL is hundreds of
+    MB and must never be held in memory whole. ``check_cancel`` (the raising variant used by
+    ``download_cuda_libs``) is polled between members so the unpack phase honours cancellation.
+    """
     count = 0
+    root = dest.resolve()
     with zipfile.ZipFile(whl_path) as zf:
         for name in zf.namelist():
             parts = name.split("/")
-            if parts[0] == "nvidia" and "bin" in parts and name.endswith(".dll"):
-                target = dest / name
-                target.parent.mkdir(parents=True, exist_ok=True)
-                with zf.open(name) as src, open(target, "wb") as out:
-                    out.write(src.read())
-                count += 1
+            if parts[0] != "nvidia" or "bin" not in parts or not name.endswith(".dll"):
+                continue
+            if check_cancel:
+                check_cancel()
+            target = dest / name
+            if ".." in parts or "\\" in name or not target.resolve().is_relative_to(root):
+                raise RuntimeError(f"Недопустимый путь внутри wheel: {name} — распаковка прервана")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(name) as src, open(target, "wb") as out:
+                shutil.copyfileobj(src, out, 1 << 20)
+            count += 1
     return count
 
 
@@ -160,7 +174,7 @@ def download_cuda_libs(on_progress: ProgressCallback | None = None, cancel: Canc
                     )
                 if on_progress:
                     on_progress(done, total, f"Распаковка {pkg}…")
-                if _extract_dlls(tmp_path, dest) == 0:
+                if _extract_dlls(tmp_path, dest, check_cancel) == 0:
                     raise RuntimeError(f"В пакете {pkg}=={ver} не найдено DLL — повторите загрузку")
             finally:
                 tmp_path.unlink(missing_ok=True)

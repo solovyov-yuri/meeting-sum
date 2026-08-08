@@ -73,6 +73,51 @@ def test_extract_dlls_only_takes_bin_dlls(tmp_path: Path) -> None:
     assert not (dest / "nvidia/cublas/include/foo.h").exists()
 
 
+@pytest.mark.parametrize("member", ["nvidia/../../evil/bin/x.dll", "nvidia/..\\..\\evil/bin/x.dll"])
+def test_extract_dlls_refuses_members_escaping_dest(tmp_path: Path, member: str) -> None:
+    # A crafted wheel must not be able to write outside `dest` — neither via `..` segments nor via
+    # backslash separators (which pathlib treats as separators on Windows). Nothing outside `dest`
+    # may be created, not even the directory the member would have needed.
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(member, b"EVIL")
+    whl = tmp_path / "pkg.whl"
+    whl.write_bytes(buf.getvalue())
+
+    dest = tmp_path / "a" / "b" / "out"
+    dest.mkdir(parents=True)
+    with pytest.raises(RuntimeError, match="Недопустимый путь"):
+        cuda_support._extract_dlls(whl, dest)
+
+    assert list(tmp_path.rglob("*.dll")) == []  # nothing anywhere under the temp tree
+    assert not (dest / "nvidia").exists()  # the refusal must precede mkdir(), not follow it
+
+
+def test_extract_dlls_polls_cancel_between_members(tmp_path: Path) -> None:
+    # Cancelling during the unpack phase must surface as DownloadCancelled and stop mid-wheel, so
+    # the poll has to happen between members, not only once on entry.
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("nvidia/cublas/bin/one.dll", b"DLL")
+        zf.writestr("nvidia/cublas/bin/two.dll", b"DLL")
+    whl = tmp_path / "pkg.whl"
+    whl.write_bytes(buf.getvalue())
+
+    calls = {"n": 0}
+
+    def check_cancel() -> None:
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise cuda_support.DownloadCancelled
+
+    dest = tmp_path / "out"
+    with pytest.raises(cuda_support.DownloadCancelled):
+        cuda_support._extract_dlls(whl, dest, check_cancel)
+
+    assert (dest / "nvidia/cublas/bin/one.dll").is_file()
+    assert not (dest / "nvidia/cublas/bin/two.dll").exists()
+
+
 class _FakeResponse:
     """Minimal urlopen stand-in: a context manager serving `payload` in chunks."""
 
@@ -140,6 +185,33 @@ def test_download_cancelled_mid_stream_raises_cancelled(monkeypatch: pytest.Monk
 
     with pytest.raises(cuda_support.DownloadCancelled):
         cuda_support.download_cuda_libs(cancel=cancel_after_first_chunk)
+    assert cuda_support.is_cuda_installed() is False
+
+
+def test_download_cancelled_during_extract_leaves_no_sentinel(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # Cancelling once the unpack phase has started must also raise DownloadCancelled, and the
+    # completion sentinel must stay absent so the next run re-offers the download.
+    monkeypatch.setenv("RECAP_CUDA_DIR", str(tmp_path / "cuda"))
+    monkeypatch.setattr(cuda_support.sys, "frozen", True, raising=False)
+
+    payload = _wheel_bytes("cublas", "cublas64_12.dll")
+    monkeypatch.setattr(
+        cuda_support, "_resolve_win_wheel", lambda pkg, ver: ("https://example.invalid/w", hashlib.sha256(payload).hexdigest(), len(payload))
+    )
+    monkeypatch.setattr(cuda_support.urllib.request, "urlopen", lambda url, timeout=0: _FakeResponse(payload))
+
+    extracting = {"now": False}
+
+    def on_progress(done: int, total: int, message: str) -> None:
+        if message.startswith("Распаковка"):
+            extracting["now"] = True
+
+    with pytest.raises(cuda_support.DownloadCancelled):
+        cuda_support.download_cuda_libs(on_progress=on_progress, cancel=lambda: extracting["now"])
+
+    # The cancel must land inside the unpack phase — nothing of the wheel may reach the cache dir.
+    assert not (tmp_path / "cuda" / "nvidia/cublas/bin/cublas64_12.dll").exists()
+    assert not cuda_support._sentinel().exists()
     assert cuda_support.is_cuda_installed() is False
 
 
