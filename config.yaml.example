@@ -5,6 +5,7 @@
 # audio: data/meeting.wav
 # transcript: data/transcript.txt
 # summary: data/summary.txt
+# output_dir:                  # desktop only: single folder for run outputs (null → next to audio)
 
 transcription:
   language: ru                 # language passed to Whisper
@@ -28,15 +29,16 @@ transcription:
 
 summarization:
   # language: ru               # language for LLM prompts; defaults to ru regardless of transcription.language
-  mode: medium                 # brief | medium | detailed
-  max_transcript_chars: 60000  # per-request limit; long transcripts are split into chunks (chunking_mode: chunk)
+  mode: medium                 # brief | medium | detailed | lecture
+  max_transcript_chars: 42000  # per-request limit; long transcripts are split into chunks (chunking_mode: chunk)
   timeout_seconds: 60          # seconds to wait for an LLM response before giving up
   retries: 2                   # retries on timeout/connection errors (0 = no retries)
   chunking_mode: chunk         # chunk (default): split, summarize each, then merge; truncate: cut at max_transcript_chars
   model:
     provider: ollama           # openai | xai | ollama | lm-studio | vllm
     name: qwen3.5:latest
-    # api_key: sk-...                          # required for openai; not needed for local providers
+    # api_key: required for openai; not needed for local providers. Do NOT put the secret here —
+    #          set it via the RECAP_SUMMARIZATION_MODEL_API_KEY environment variable instead.
     # base_url: http://my-server:9000/v1       # overrides the provider preset URL
     # num_ctx: 32768                           # Ollama context window in tokens; null = model default; ignored by OpenAI/xAI
 

@@ -64,7 +64,8 @@ def test_make_summarizer_xai_base_url_from_preset(monkeypatch: pytest.MonkeyPatc
         captured.update(kwargs)
 
     monkeypatch.setattr(llm_mod.LLMSummarizer, "__init__", fake_init)
-    make_summarizer(Settings(), "xai", "medium")
+    settings = _settings(sum_model=SummarizationModelSettings(api_key="sk-test"))
+    make_summarizer(settings, "xai", "medium")
 
     assert captured["base_url"] == "https://api.x.ai/v1"
 
@@ -78,7 +79,7 @@ def test_make_summarizer_settings_base_url_takes_priority(monkeypatch: pytest.Mo
         captured.update(kwargs)
 
     monkeypatch.setattr(llm_mod.LLMSummarizer, "__init__", fake_init)
-    settings = _settings(sum_model=SummarizationModelSettings(base_url="http://custom:9999/v1"))
+    settings = _settings(sum_model=SummarizationModelSettings(base_url="http://custom:9999/v1", api_key="sk-test"))
     make_summarizer(settings, "ollama", "medium")
 
     assert captured["base_url"] == "http://custom:9999/v1"
@@ -97,6 +98,30 @@ def test_make_summarizer_api_key_passed(monkeypatch: pytest.MonkeyPatch) -> None
     make_summarizer(settings, "ollama", "medium")
 
     assert captured["api_key"] == "sk-test"
+
+
+def test_make_summarizer_external_provider_without_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    # SEC-004: even with OPENAI_API_KEY in the environment, an external provider with
+    # no configured key must fail loudly rather than let the OpenAI SDK read that env var.
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-should-be-ignored")
+    settings = _settings(sum_model=SummarizationModelSettings(provider="openai", api_key=None))
+    with pytest.raises(ValueError, match="No API key configured for external provider"):
+        make_summarizer(settings, "openai", "medium")
+
+
+def test_make_summarizer_local_provider_without_key_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    import providers.llm as llm_mod
+
+    captured: dict = {}
+
+    def fake_init(self: object, **kwargs: object) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(llm_mod.LLMSummarizer, "__init__", fake_init)
+    settings = _settings(sum_model=SummarizationModelSettings(provider="ollama", api_key=None))
+    make_summarizer(settings, "ollama", "medium")
+
+    assert captured["api_key"] is None
 
 
 def test_make_summarizer_model_override(monkeypatch: pytest.MonkeyPatch) -> None:

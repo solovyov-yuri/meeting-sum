@@ -4,6 +4,7 @@ import ctypes
 import logging
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from transcript import Segment, Transcript
@@ -13,6 +14,18 @@ logger = logging.getLogger(__name__)
 
 def _set_cuda_paths() -> None:
     """Pre-load venv NVIDIA libs so ctranslate2's lazy dlopen calls find them."""
+    if getattr(sys, "frozen", False):
+        # Portable (PyInstaller) build: CUDA libs are NOT bundled (~1.9 GB). They are downloaded on
+        # demand into cuda_support.cuda_libs_dir(); add them to PATH so ctranslate2's dlopen resolves
+        # them. The isdir guards make a CPU-only run (libs not downloaded) harmless.
+        from cuda_support import cuda_libs_dir  # noqa: PLC0415
+
+        base = cuda_libs_dir()
+        nvidia_dirs = [str(base / "nvidia" / "cublas" / "bin"), str(base / "nvidia" / "cudnn" / "bin")]
+        existing = os.environ.get("PATH", "")
+        os.environ["PATH"] = os.pathsep.join([d for d in nvidia_dirs if os.path.isdir(d)] + [existing])
+        return
+
     project_root = Path(__file__).resolve().parents[2]
     if sys.platform == "win32":
         logger.info("windows detected, adding NVIDIA libs to PATH")
@@ -60,6 +73,8 @@ class WhisperTranscriber:
         vad_filter: bool = True,
         condition_on_previous_text: bool = True,
     ) -> None:
+        # Portable build: GPU libs are downloaded on demand as a `download` step before this runs
+        # (workflows._ensure_cuda), so they're present by the time the model loads.
         _set_cuda_paths()
         from faster_whisper import WhisperModel  # noqa: PLC0415
         from rich.console import Console  # noqa: PLC0415
@@ -77,7 +92,9 @@ class WhisperTranscriber:
             self._model = WhisperModel(model_name, device=device, compute_type=compute_type)
         logger.info("Model %s loaded on %s.", model_name, device)
 
-    def transcribe(self, audio: Path, language: str = "ru") -> Transcript:
+    def transcribe(
+        self, audio: Path, language: str = "ru", *, on_progress: Callable[[float], None] | None = None
+    ) -> Transcript:
         from rich.console import Console  # noqa: PLC0415
         from rich.progress import (  # noqa: PLC0415
             BarColumn,
@@ -101,12 +118,22 @@ class WhisperTranscriber:
             TaskProgressColumn(),
             TimeElapsedColumn(),
             console=Console(stderr=True),
+            # The desktop bridge's on_progress callback writes NDJSON to sys.stdout; Rich's default
+            # redirect_stdout=True would swallow those lines into the stderr console, so the app
+            # never sees per-segment progress. stdout must stay untouched here.
+            redirect_stdout=False,
         ) as progress:
-            task = progress.add_task("Transcribing", total=info.duration)
+            duration = info.duration
+            if on_progress is not None and not duration:
+                logger.warning("Whisper reported no audio duration — transcription progress %% unavailable.")
+            task = progress.add_task("Transcribing", total=duration or None)
             segments = []
             for s in segments_iter:
                 segments.append(Segment(start=s.start, end=s.end, text=s.text.strip()))
-                progress.update(task, completed=s.end)
+                if duration:
+                    progress.update(task, completed=s.end)
+                    if on_progress is not None:
+                        on_progress(min(1.0, s.end / duration))
 
-        logger.info("Got %d segments.", len(segments))
+        logger.info("Got %d segments (duration=%.1fs).", len(segments), info.duration or 0.0)
         return Transcript(segments=tuple(segments))

@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Recap Desktop UI Reference</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="reference-bar">
+      <div>
+        <strong>Recap UI Reference</strong>
+        <span>static visual contract</span>
+      </div>
+      <nav>
+        <a href="#running">01 Main running</a>
+        <a href="#partial">02 Partial success</a>
+        <a href="#settings">03 Settings</a>
+      </nav>
+    </div>
+
+    <section id="running" class="reference-screen">
+      <div class="app-window">
+        <aside class="sidebar">
+          <div class="brand">
+            <img src="../mockups/icons/recap-icon-dimensional-1.png" alt="" />
+            <span>Recap</span>
+          </div>
+          <button class="primary wide">Новый разбор</button>
+          <nav class="nav-list">
+            <button class="nav-item active">История</button>
+            <button class="nav-item">Настройки</button>
+          </nav>
+          <div class="sidebar-title">Последние</div>
+          <div class="history-list">
+            <button class="history-item selected">
+              <span class="dot running"></span>
+              <span>
+                <strong>meeting_2026_06_19.mp3</strong>
+                <small>Сегодня, 12:04 · ollama / medium</small>
+              </span>
+            </button>
+            <button class="history-item">
+              <span class="dot success"></span>
+              <span>
+                <strong>sync_review.m4a</strong>
+                <small>Сегодня, 10:18 · ollama / brief</small>
+              </span>
+            </button>
+            <button class="history-item">
+              <span class="dot warning"></span>
+              <span>
+                <strong>planning.wav</strong>
+                <small>Вчера, 18:42 · partial_success</small>
+              </span>
+            </button>
+          </div>
+        </aside>
+
+        <main class="workspace">
+          <header class="file-header">
+            <div class="file-icon">♪</div>
+            <div class="file-meta">
+              <h1>meeting_2026_06_19.mp3</h1>
+              <p>C:\meetings\meeting_2026_06_19.mp3 · 01:24:12 · 78 MB</p>
+            </div>
+            <button class="danger">Остановить</button>
+          </header>
+
+          <section class="pipeline-card">
+            <div class="pipeline-line"></div>
+            <div class="pipeline-step done">
+              <div class="pipeline-circle"><span>✓</span></div>
+              <strong>Подготовка</strong>
+              <small>Готово</small>
+            </div>
+            <div class="pipeline-step active">
+              <div class="pipeline-circle progress-42"><span>42%</span></div>
+              <strong>Транскрибация</strong>
+              <small>42%</small>
+            </div>
+            <div class="pipeline-step waiting">
+              <div class="pipeline-circle"><span>⌛</span></div>
+              <strong>Суммаризация</strong>
+              <small>Ожидает</small>
+            </div>
+            <div class="pipeline-step waiting">
+              <div class="pipeline-circle"><span>□</span></div>
+              <strong>Экспорт</strong>
+              <small>Ожидает</small>
+            </div>
+          </section>
+
+          <section class="panel result-panel">
+            <div class="tabs">
+              <button>Транскрипт</button>
+              <button>Резюме</button>
+              <button class="active">Лог</button>
+            </div>
+            <div class="log-list">
+              <div><time>12:04:10</time><span class="ok">Файл выбран: meeting_2026_06_19.mp3</span></div>
+              <div><time>12:04:12</time><span class="ok">Подготовка аудио включена</span></div>
+              <div><time>12:04:15</time><span>Загружаю модель faster-whisper: large-v3</span></div>
+              <div><time>12:05:01</time><span>Транскрибация началась</span></div>
+              <div><time>12:08:34</time><span>Транскрибация... 42%</span></div>
+            </div>
+          </section>
+        </main>
+
+        <aside class="inspector">
+          <h2>Настройки запуска</h2>
+          <label class="field"><span>Провайдер</span><select><option>ollama</option></select></label>
+          <label class="field"><span>Модель</span><input value="qwen3.5:latest" /></label>
+          <label class="field"><span>Язык распознавания</span><select><option>Русский</option></select></label>
+          <label class="field"><span>Режим резюме</span><div class="segmented"><button>brief</button><button class="active">medium</button><button>detailed</button></div></label>
+          <div class="info-box">
+            <div><span>Chunking</span><strong>chunk</strong></div>
+            <div><span>Предобработка</span><strong>вкл</strong></div>
+            <div><span>Форматы</span><strong>Telegram, JSON</strong></div>
+          </div>
+          <div class="hint-box">Ключи API настраиваются только на экране настроек.</div>
+        </aside>
+      </div>
+    </section>
+
+    <section id="partial" class="reference-screen">
+      <div class="app-window">
+        <aside class="sidebar">
+          <div class="brand">
+            <img src="../mockups/icons/recap-icon-dimensional-1.png" alt="" />
+            <span>Recap</span>
+          </div>
+          <button class="primary wide">Новый разбор</button>
+          <nav class="nav-list">
+            <button class="nav-item active">История</button>
+            <button class="nav-item">Настройки</button>
+          </nav>
+          <div class="sidebar-title">Последние</div>
+          <div class="history-list">
+            <button class="history-item selected">
+              <span class="dot warning"></span>
+              <span>
+                <strong>meeting_2026_06_19.mp3</strong>
+                <small>Сегодня, 12:12 · partial_success</small>
+              </span>
+            </button>
+            <button class="history-item">
+              <span class="dot success"></span>
+              <span>
+                <strong>sync_review.m4a</strong>
+                <small>Сегодня, 10:18 · success</small>
+              </span>
+            </button>
+          </div>
+        </aside>
+
+        <main class="workspace">
+          <header class="file-header">
+            <div class="file-icon">♪</div>
+            <div class="file-meta">
+              <h1>meeting_2026_06_19.mp3</h1>
+              <p>C:\meetings\meeting_2026_06_19.mp3 · transcript saved</p>
+            </div>
+            <span class="status-pill warning">partial_success</span>
+          </header>
+
+          <section class="alert warning">
+            <strong>Транскрипт сохранен, но резюме не создано.</strong>
+            <span>Причина: LLM timeout. Исправьте настройки и повторите только суммаризацию.</span>
+            <div>
+              <button class="primary small">Повторить суммаризацию</button>
+              <button class="secondary small">Открыть транскрипт</button>
+            </div>
+          </section>
+
+          <section class="panel result-panel">
+            <div class="tabs">
+              <button class="active">Транскрипт</button>
+              <button>Резюме</button>
+              <button>Лог</button>
+            </div>
+            <div class="transcript">
+              <div><time>00:02</time><p>Обсудили статус интеграции и текущие блокеры по авторизации.</p></div>
+              <div><time>00:05</time><p>Решили перенести запуск на пятницу, чтобы закрыть проверку качества.</p></div>
+              <div><time>00:09</time><p>Зафиксировали владельцев задач: API берет Леша, экспорт берет Маша.</p></div>
+              <div><time>00:14</time><p>Следующий синк назначен на начало следующей недели.</p></div>
+            </div>
+          </section>
+        </main>
+
+        <aside class="inspector">
+          <h2>Результат</h2>
+          <div class="info-box">
+            <div><span>Транскрипт</span><strong class="success-text">сохранен</strong></div>
+            <div><span>Резюме</span><strong class="warning-text">не создано</strong></div>
+            <div><span>Провайдер</span><strong>ollama</strong></div>
+            <div><span>Модель</span><strong>qwen3.5:latest</strong></div>
+          </div>
+          <button class="primary wide">Повторить суммаризацию</button>
+          <button class="secondary wide">Открыть папку</button>
+          <div class="export-box">
+            <h3>Экспорт резюме</h3>
+            <label><input type="checkbox" checked /> Telegram (.txt)</label>
+            <label><input type="checkbox" checked /> Plain text (.txt)</label>
+            <label><input type="checkbox" checked /> JSON</label>
+            <button class="secondary wide" disabled>Экспортировать</button>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section id="settings" class="reference-screen">
+      <div class="app-window">
+        <aside class="sidebar">
+          <div class="brand">
+            <img src="../mockups/icons/recap-icon-dimensional-1.png" alt="" />
+            <span>Recap</span>
+          </div>
+          <button class="primary wide">Новый разбор</button>
+          <nav class="nav-list">
+            <button class="nav-item">История</button>
+            <button class="nav-item active">Настройки</button>
+          </nav>
+          <div class="sidebar-title">Последние</div>
+          <div class="history-list">
+            <button class="history-item">
+              <span class="dot success"></span>
+              <span>
+                <strong>sync_review.m4a</strong>
+                <small>Сегодня, 10:18 · success</small>
+              </span>
+            </button>
+          </div>
+        </aside>
+
+        <main class="settings-shell">
+          <header class="settings-header">
+            <h1>Настройки</h1>
+            <span class="dirty-dot">Есть несохраненные изменения</span>
+          </header>
+          <div class="settings-body">
+            <nav class="settings-nav">
+              <button>Транскрибация</button>
+              <button class="active">Суммаризация</button>
+              <button>Предобработка</button>
+              <button>Пути</button>
+              <button>Приватность</button>
+              <button>Ключи API</button>
+            </nav>
+            <section class="settings-form">
+              <h2>Настройки суммаризации</h2>
+              <div class="form-grid">
+                <label><span>Провайдер</span><select><option>ollama</option></select></label>
+                <label><span>Модель</span><input value="qwen3.5:latest" /></label>
+                <label><span>Base URL</span><input value="http://localhost:11434/v1" /></label>
+                <label><span>Язык резюме</span><select><option>Русский</option></select></label>
+                <label><span>Режим</span><div class="segmented"><button>brief</button><button class="active">medium</button><button>detailed</button></div></label>
+                <label><span>Chunking</span><div class="segmented two"><button class="active">chunk</button><button>truncate</button></div></label>
+                <label><span>Макс. символов</span><input value="60000" /></label>
+                <label><span>Timeout</span><input value="60" /></label>
+                <label><span>Retries</span><input value="2" /></label>
+                <label><span>num_ctx</span><input placeholder="не задано" /></label>
+              </div>
+              <div class="key-card">
+                <div>
+                  <h3>API key</h3>
+                  <p>Ключ сохранен в системном хранилище. В config.yaml он не записывается.</p>
+                </div>
+                <span class="status-pill success">Ключ сохранен</span>
+                <div class="key-actions">
+                  <button class="primary small">Сохранить ключ</button>
+                  <button class="secondary small">Проверить подключение</button>
+                  <button class="danger small">Удалить</button>
+                </div>
+              </div>
+              <div class="alert warning compact">
+                <strong>Внешний провайдер может получить текст транскрипта.</strong>
+                <label><input type="checkbox" /> Я понимаю</label>
+              </div>
+            </section>
+          </div>
+          <footer class="settings-footer">
+            <span>● Есть несохраненные изменения</span>
+            <div>
+              <button class="secondary">Отменить</button>
+              <button class="primary">Сохранить</button>
+            </div>
+          </footer>
+        </main>
+      </div>
+    </section>
+  </body>
+</html>

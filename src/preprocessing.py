@@ -8,6 +8,9 @@ from pathlib import Path
 
 from config import PreprocessingSettings
 
+# Upper bound on ffmpeg runtime so a stuck process cannot hang the CLI forever.
+FFMPEG_TIMEOUT_SECONDS = 3600
+
 
 class PreprocessingError(RuntimeError):
     pass
@@ -15,7 +18,7 @@ class PreprocessingError(RuntimeError):
 
 def _build_cmd(audio: Path, output: Path, settings: PreprocessingSettings) -> list[str]:
     cmd = [
-        "ffmpeg", "-y", "-i", str(audio),
+        "ffmpeg", "-nostdin", "-y", "-i", str(audio),
         "-ac", str(settings.channels),
         "-ar", str(settings.sample_rate),
         "-c:a", settings.codec,
@@ -39,11 +42,22 @@ def preprocess_audio(audio: Path, output: Path, settings: PreprocessingSettings)
     """Run ffmpeg to convert audio to a stable WAV format. Returns output path."""
     cmd = _build_cmd(audio, output, settings)
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=FFMPEG_TIMEOUT_SECONDS,
+        )
     except FileNotFoundError:
         raise PreprocessingError(
             "ffmpeg not found. Install ffmpeg and ensure it is on PATH."
         )
+    except subprocess.TimeoutExpired as exc:
+        raise PreprocessingError(
+            f"ffmpeg timed out after {FFMPEG_TIMEOUT_SECONDS} seconds."
+        ) from exc
     except subprocess.CalledProcessError as exc:
         message = (exc.stderr or str(exc)).strip()
         raise PreprocessingError(f"ffmpeg failed: {message}") from exc

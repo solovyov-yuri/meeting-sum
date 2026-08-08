@@ -99,3 +99,46 @@ def test_transcribe_params(fake_faster_whisper: dict) -> None:
     assert isinstance(result, Transcript)
     assert len(result.segments) == 1
     assert result.segments[0].text == "hello"
+
+
+def test_transcribe_on_progress_stdout_not_swallowed_by_rich(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The bridge's on_progress writes NDJSON to sys.stdout from inside the segment loop.
+
+    Rich's Progress defaults to redirect_stdout=True, which reroutes those writes into its
+    (stderr) console — the desktop app then never receives per-segment progress lines. This
+    pins stdout staying untouched while the progress bar is live.
+
+    Rich only redirects when it believes the console is a terminal — which is exactly the
+    desktop-worker case on Windows (stderr → NUL reports isatty()=True), so force it here.
+    """
+    import io
+
+    import rich.console
+
+    from providers.whisper import WhisperTranscriber
+
+    monkeypatch.setattr(rich.console.Console, "is_terminal", property(lambda self: True))
+
+    class FakeInfo:
+        duration = 10.0
+
+    class FakeSegment:
+        start, end, text = 0.0, 5.0, " hi "
+
+    class FakeModel:
+        def __init__(self, *a: object, **k: object) -> None: ...
+
+        def transcribe(self, audio, language, beam_size, vad_filter, condition_on_previous_text):  # type: ignore[no-untyped-def]
+            return iter([FakeSegment()]), FakeInfo()
+
+    fake_fw = MagicMock()
+    fake_fw.WhisperModel = FakeModel
+    monkeypatch.setitem(sys.modules, "faster_whisper", fake_fw)
+
+    out = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+
+    tr = WhisperTranscriber(model_name="small", device="cpu")
+    tr.transcribe(tmp_path / "audio.wav", "ru", on_progress=lambda p: sys.stdout.write(f"pct={p}\n"))
+
+    assert out.getvalue() == "pct=0.5\n"  # empty if Rich redirected stdout into its console

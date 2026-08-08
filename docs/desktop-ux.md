@@ -2,7 +2,11 @@
 
 ## 0. Моки
 
-Визуальные ориентиры для MVP:
+Главный визуальный источник для реализации: `docs/ui-reference/index.html`.
+
+Он согласует размеры, spacing, цвета и состояния между экранами. Если HTML-референс и PNG-моки расходятся, агент должен следовать HTML-референсу.
+
+Вторичные визуальные ориентиры для MVP:
 
 - `docs/mockups/01-main-running.png` - выбран файл, идет транскрибация, видны прогресс и live-log.
 - `docs/mockups/02-result-partial-success.png` - transcript сохранен, summary упал, показан partial success recovery.

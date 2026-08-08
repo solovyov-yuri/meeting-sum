@@ -11,10 +11,9 @@ Bridge должен быть JSON-friendly и устойчивым к долги
 ```python
 @dataclass(frozen=True)
 class RunOptions:
-    audio_path: Path
+    audio_path: Path | None = None
     transcript_path: Path | None = None
     summary_path: Path | None = None
-    output_format: str = "telegram"
     transcription_language: str | None = None
     summary_language: str | None = None
     provider: str | None = None
@@ -40,6 +39,7 @@ class RunResult:
     transcript_text: str | None
     summary_text: str | None
     error_message: str | None = None
+    output_path: Path | None = None  # preprocess-only: the produced *.preprocessed.wav
 ```
 
 Допустимые `step`:
@@ -212,10 +212,10 @@ Input:
 
 ```json
 {
+  "run_mode": "full",
   "audio_path": "C:/meetings/meeting.mp3",
   "transcript_path": null,
   "summary_path": null,
-  "output_formats": ["telegram", "plain", "json"],
   "overrides": {
     "transcription_language": "ru",
     "summary_language": "ru",
@@ -225,6 +225,16 @@ Input:
   }
 }
 ```
+
+`run_mode` selects the pipeline slice (default `"full"`) — **distinct from `overrides.mode`**, which is
+the *summary* mode (brief/medium/detailed):
+
+- `"full"` — preprocess (forced on) → transcribe → summarize → export.
+- `"transcribe"` — preprocess → transcribe only; returns `success` with the transcript written and no
+  summary (empty transcript is success-with-warning). No summarization key required.
+- `"preprocess"` — ffmpeg only; writes `<output_dir|audio-dir>/<stem>.preprocessed.wav`, returned on
+  `output_path` and the success event's `path`. `audio_path` is required for these three.
+- Standalone `"summarize"` is the separate `resummarize` command (input is a transcript, not audio).
 
 Progress events:
 
@@ -248,9 +258,37 @@ Final output:
   "summary_json_path": "C:/.../summary.json",
   "transcript_text": "...",
   "summary_text": "...",
-  "error_message": null
+  "error_message": null,
+  "output_path": null
 }
 ```
+
+`output_path` is set only by `run_mode: "preprocess"` (the produced `*.preprocessed.wav`); otherwise null.
+
+### `serve` — persistent warm-model worker (PERF-001)
+
+To avoid reloading the Whisper model (~10–60 s for large-v3) on every run, the Rust host does **not**
+spawn a fresh process per `run_recap`. Instead it keeps one `recap-bridge serve` process alive and
+routes runs through it:
+
+- `serve` reads **one JSON run-request per line** on stdin and, per run, streams the same framing as
+  `run_recap` (`{"type":"progress"}` events then a terminal `{"type":"result"}` / `{"type":"error"}`
+  line). Its stdout stays open between runs — the host reads until the terminal line, not EOF.
+- The worker caches exactly one transcriber, keyed on the transcription model fields; changing the
+  model drops the old one (freeing GPU memory) before building the new.
+- Runs are serialised by the host (a mutex), so `serve` only ever handles one request at a time.
+- **Fallback:** if the worker fails to spawn or its pipe breaks, the host falls back to a fresh
+  spawn-per-call `run_recap` — slow (model reloads) but correct.
+- Only `run_recap` uses the worker. `resummarize` is LLM-only (no model) and stays spawn-per-call.
+
+### `resummarize`
+
+**Streaming** (second NDJSON channel besides `run_recap`). Re-runs only summarization on an existing
+transcript — the partial_success recovery path («Повторить суммаризацию»); never re-transcribes.
+
+Input: same shape as `run_recap`, but `transcript_path` must point at an existing transcript on disk
+(`audio_path` is carried for history metadata only, not read). Progress events and the final output
+object are identical to `run_recap`.
 
 ### `export_summary`
 
@@ -258,8 +296,9 @@ Input:
 
 ```json
 {
-  "summary_text": "...edited by user...",
-  "formats": ["telegram", "plain", "json"],
+  "summary_json_path": "C:/.../meeting_2026_06_19_summary.json",
+  "summary_text": "...edited plain text; Markdown from pre-plain entries (fallback if no/empty base json)...",
+  "formats": ["markdown", "plain", "html", "json"],
   "target_dir": "C:/meetings/output",
   "base_name": "meeting_2026_06_19",
   "mode": "medium"
@@ -270,8 +309,9 @@ Output:
 
 ```json
 {
-  "telegram_path": "C:/.../meeting_2026_06_19_summary.txt",
+  "markdown_path": "C:/.../meeting_2026_06_19_summary.md",
   "plain_path": "C:/.../meeting_2026_06_19_summary_plain.txt",
+  "html_path": "C:/.../meeting_2026_06_19_summary.html",
   "json_path": "C:/.../meeting_2026_06_19_summary.json"
 }
 ```
@@ -302,6 +342,61 @@ Output:
 
 Удаляет только запись истории, не файлы.
 
+### `test_connection`
+
+Проверяет доступность LLM-провайдера с сохранёнными настройками/ключом.
+
+Input:
+
+```json
+{ "provider": "openai" }
+```
+
+Output:
+
+```json
+{ "ok": true, "message": "Подключение успешно." }
+```
+
+### `list_models`
+
+Запрашивает список моделей у провайдера через OpenAI-совместимый `GET /v1/models` (реальный
+сетевой вызов с коротким таймаутом). Никогда не бросает — при любой ошибке (офлайн, нет ключа,
+сервер недоступен) возвращает пустой список и текст ошибки, а UI откатывается к ручному вводу.
+Base URL разрешается по логике CODE-005 (доверяем сохранённому base_url только для того же
+провайдера, иначе — пресет).
+
+Input:
+
+```json
+{ "provider": "openai" }
+```
+
+Output:
+
+```json
+{ "models": ["gpt-4o", "gpt-4o-mini"], "error": null }
+```
+
+### `read_text`
+
+Читает файл результата с диска (используется, чтобы заново открыть запись истории). Отсутствующий
+файл — не ошибка.
+
+Input:
+
+```json
+{ "path": "C:/.../summary.txt" }
+```
+
+Output:
+
+```json
+{ "text": "...", "exists": true }
+```
+
+Отсутствующий файл: `{ "text": null, "exists": false }`; ошибка чтения добавляет `"error"`.
+
 ## 5. Secrets
 
 Для Python можно рассмотреть пакет `keyring`. Для Tauri/Rust можно рассмотреть plugin/store или Rust crate, который работает с Windows Credential Manager.
@@ -326,6 +421,24 @@ Output:
 ```text
 Остановка произойдет после завершения текущего этапа.
 ```
+
+### Реализация (ARCH-002)
+
+Отмена кооперативная, через flag-файл — процесс bridge **не** убивается:
+
+- на каждый `run_recap`/`resummarize` Rust генерирует уникальный путь и передаёт его в payload
+  как `cancel_flag` (ключ съедается мостом в `_streaming`, до сборки `RunOptions`);
+- по нажатию `Остановить` (`cancel_run`) watcher-поток в Rust создаёт этот файл;
+- `_streaming` строит `cancel = Path(cancel_flag).exists` и передаёт в `run_one_file`, который
+  проверяет флаг между этапами и возвращает `RunResult("cancelled", …)` — с сохранённым
+  `transcript_path`, если транскрипт уже записан;
+- Rust дочитывает stdout до реального `result` (не синтезирует `cancelled` сам), поэтому отменённый
+  запуск попадает в историю со статусом `cancelled` и указателем на транскрипт;
+- так как процесс не убит, `finally` в Python отрабатывает — временный WAV удаляется, ffmpeg не
+  висит. Rust удаляет flag-файл по завершении запуска.
+
+Ограничение: во время самого этапа транскрибации (долгий, без прогресс-строк) отмена срабатывает
+только на его границе — это и есть текст предупреждения выше.
 
 ## 7. Logging
 
