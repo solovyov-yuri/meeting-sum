@@ -297,7 +297,7 @@ Input:
 ```json
 {
   "summary_json_path": "C:/.../meeting_2026_06_19_summary.json",
-  "summary_text": "...edited Markdown (fallback if no/empty base json)...",
+  "summary_text": "...edited plain text; Markdown from pre-plain entries (fallback if no/empty base json)...",
   "formats": ["markdown", "plain", "html", "json"],
   "target_dir": "C:/meetings/output",
   "base_name": "meeting_2026_06_19",

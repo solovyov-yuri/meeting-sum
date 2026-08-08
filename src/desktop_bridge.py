@@ -35,6 +35,11 @@ from workflows import RunOptions
 
 logger = logging.getLogger(__name__)
 
+# The desktop shows, edits and copies the summary as Telegram-ready plain text, so that is the form
+# the run writes to the .txt and hands to the UI (the CLI keeps Markdown). Editing round-trips
+# through ``formatters.parse_plain``; every export is still rendered from the structured .json.
+DESKTOP_SUMMARY_FORMAT = "plain"
+
 
 # ── Desktop state locations ──────────────────────────────────────────────────────
 
@@ -442,7 +447,7 @@ def _append_history(entry: dict[str, Any]) -> None:
 
 
 def export_summary(payload: dict[str, Any]) -> dict[str, Any]:
-    from formatters import parse_summary, render_markdown, to_html, to_json, to_plain  # noqa: PLC0415
+    from formatters import parse_summary_text, render_markdown, to_html, to_json, to_plain  # noqa: PLC0415
     from summary_schema import load_summary_json  # noqa: PLC0415
 
     formats = payload.get("formats") or ["markdown", "plain", "html", "json"]
@@ -466,7 +471,7 @@ def export_summary(payload: dict[str, Any]) -> dict[str, Any]:
         if not summary.blocks:  # old/foreign JSON with no blocks → fall back to the Markdown
             summary = None
     if summary is None:
-        summary = parse_summary(payload.get("summary_text") or "", mode)
+        summary = parse_summary_text(payload.get("summary_text") or "", mode)
     out: dict[str, Any] = {"markdown_path": None, "plain_path": None, "html_path": None, "json_path": None}
 
     if "markdown" in formats:
@@ -474,8 +479,9 @@ def export_summary(payload: dict[str, Any]) -> dict[str, Any]:
         write_text_atomic(path, render_markdown(summary))
         out["markdown_path"] = str(path)
     if "plain" in formats:
-        # Distinct name: {base}_summary.txt is the canonical (Markdown) summary the run writes and
-        # history reopens — plain text must not clobber it (plain does not round-trip the parser).
+        # Distinct name: {base}_summary.txt is the summary the run wrote and history reopens —
+        # exporting must not overwrite it (the export may target that same folder, and the base file
+        # holds the user's edits, while this one is re-rendered from the saved .json).
         path = target_dir / f"{base_name}_summary_plain.txt"
         write_text_atomic(path, to_plain(summary))
         out["plain_path"] = str(path)
@@ -543,10 +549,11 @@ def pull_model(payload: dict[str, Any], *, emit: Any, cancel: Any) -> workflows.
 
 
 def save_summary(payload: dict[str, Any]) -> dict[str, Any]:
-    """Persist the edited summary: overwrite the canonical Markdown ``.txt`` and re-derive the
-    structured ``.json`` from it (parse Markdown → object → JSON). Mirrors what a run writes, so
-    reopening the history item reflects the edits."""
-    from formatters import parse_summary, to_json  # noqa: PLC0415
+    """Persist the edited summary: overwrite the canonical ``.txt`` and re-derive the structured
+    ``.json`` from it (parse → object → JSON). Mirrors what a run writes, so reopening the history
+    item reflects the edits. The text is the plain-text form; ``parse_summary_text`` still accepts
+    the Markdown written by pre-plain-text runs."""
+    from formatters import parse_summary_text, to_json  # noqa: PLC0415
 
     summary_text = payload["summary_text"]
     summary_path = Path(payload["summary_path"])
@@ -557,7 +564,7 @@ def save_summary(payload: dict[str, Any]) -> dict[str, Any]:
 
     json_path = summary_path.with_name(f"{summary_path.stem}.json")
     write_text_atomic(summary_path, summary_text)
-    write_text_atomic(json_path, to_json(parse_summary(summary_text, mode)))
+    write_text_atomic(json_path, to_json(parse_summary_text(summary_text, mode)))
     return {"summary_path": str(summary_path), "json_path": str(json_path)}
 
 
@@ -663,6 +670,7 @@ def run_recap(
             cancel=cancel,
             transcriber_factory=transcriber_factory,
             force_preprocess=True,
+            summary_format=DESKTOP_SUMMARY_FORMAT,
         )
 
     _record_history(options, provider, settings, result, run_mode=run_mode)
@@ -686,7 +694,7 @@ def resummarize(
 
     _maybe_emit_privacy_warning(settings, provider, emit)
 
-    result = workflows.resummarize_one(options, settings=settings, progress=emit)
+    result = workflows.resummarize_one(options, settings=settings, progress=emit, summary_format=DESKTOP_SUMMARY_FORMAT)
     _record_history(options, provider, settings, result, run_mode="summarize")
     return result
 

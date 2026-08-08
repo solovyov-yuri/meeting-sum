@@ -105,8 +105,12 @@ src/
 - **Язык сообщений.** `RunResult.error_message` из `workflows` — на русском (для UI). CLI-команды
   (`summarize`/`run`/`batch`) печатают собственные **английские** сообщения и коды выхода.
 - **Файлы результата.** CLI пишет один файл под выбранный `--format` (markdown `.txt` **или** json
-  `.json`). Desktop (`run_one_file`) всегда пишет markdown `.txt` **и** `.json` рядом; экспорт из UI
-  даёт markdown `.md`, plain `.txt`, HTML `.html`, JSON `.json`.
+  `.json`). Desktop (`run_one_file` с `summary_format="plain"`) всегда пишет `.txt` **и** `.json`
+  рядом; экспорт из UI даёт markdown `.md`, plain `.txt`, HTML `.html`, JSON `.json`.
+- **Формат редактируемого текста.** Вкладка «Саммари» показывает и правит простой текст для
+  Telegram (`formatters.to_plain`), и именно он лежит в `.txt` разбора и в `RunResult.summary_text`.
+  CLI остаётся на Markdown. Сохранение/экспорт разбирают текст через `parse_summary_text`, который
+  сам определяет форму, поэтому записи истории, созданные до перехода, продолжают открываться.
 - **Пустая транскрипция.** `run`/`run_one_file` трактуют «речь не распознана» как ошибку (exit 1 /
   статус `failed`); `batch` считает такой файл обработанным и идёт дальше. Это расхождение
   зафиксировано как открытый вопрос (см. roadmap ARCH-001) — унификация изменит поведение `batch`.

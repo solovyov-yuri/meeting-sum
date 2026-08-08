@@ -184,6 +184,7 @@ def run_one_file(
     transcriber_factory: TranscriberFactory | None = None,
     stop_after: str | None = None,
     force_preprocess: bool = False,
+    summary_format: str = "markdown",
 ) -> RunResult:
     """Run the full one-file pipeline and return a structured result.
 
@@ -192,14 +193,15 @@ def run_one_file(
     transcript is success-with-warning here (transcription ran, just found no speech).
     ``force_preprocess=True`` runs preprocessing even if ``settings.preprocessing.enabled`` is
     False (used by full mode, where preprocessing is a mandatory step).
+    ``summary_format`` picks the form of the summary ``.txt`` and of ``RunResult.summary_text``:
+    ``"markdown"`` (the CLI) or ``"plain"`` (the desktop, which edits that text directly).
 
     Unlike the low-level helpers, this orchestrator catches errors at step boundaries
     and turns them into a ``RunResult`` with a user-facing ``error_message`` (technical
     detail goes to the logger). It always writes the transcript before the LLM call, so
     an LLM failure yields ``partial_success`` with the transcript still on disk.
 
-    It writes a Telegram-formatted ``.txt`` summary and a ``.json`` summary; the plain
-    text format is only produced by ``export_summary`` in the bridge.
+    It writes the summary ``.txt`` (see ``summary_format``) and a structured ``.json``.
     """
     from preprocessing import PreprocessingError, prepared_audio  # noqa: PLC0415
     from providers.factory import make_summarizer, make_transcriber  # noqa: PLC0415
@@ -324,6 +326,7 @@ def run_one_file(
         summary_json_path=summary_json_path,
         transcript_text=transcript_text,
         emit=emit,
+        summary_format=summary_format,
     )
 
 
@@ -415,6 +418,7 @@ def _summarize_and_export(
     summary_json_path: Path,
     transcript_text: str,
     emit: ProgressCallback,
+    summary_format: str,
 ) -> RunResult:
     """Summarize an in-memory transcript and write the .txt/.json summaries.
 
@@ -422,8 +426,13 @@ def _summarize_and_export(
     (during early validation) and hand it in. On LLM/IO failure returns ``partial_success``
     with the transcript paths preserved.
     """
-    from formatters import render_markdown, to_json  # noqa: PLC0415
+    from formatters import render_markdown, to_json, to_plain  # noqa: PLC0415
     from utils import write_text_atomic  # noqa: PLC0415
+
+    # Caller error, so check before spending an LLM call on it.
+    render_summary = {"plain": to_plain, "markdown": render_markdown}.get(summary_format)
+    if render_summary is None:
+        raise ValueError(f"Неизвестный формат саммари: {summary_format!r} (markdown | plain)")
 
     model_label = options.model or settings.summarization.model.name
     emit(ProgressEvent(STEP_SUMMARIZE, "running", f"Суммаризация началась: {provider_name} / {model_label}."))
@@ -438,14 +447,16 @@ def _summarize_and_export(
     emit(ProgressEvent(STEP_SUMMARIZE, "success", "Саммари готово."))
 
     emit(ProgressEvent(STEP_EXPORT, "running", "Сохранение результатов…"))
-    markdown_text = render_markdown(summary)
+    # The .txt is also what the desktop reopens and edits, so its form is the caller's choice:
+    # the desktop edits Telegram-ready plain text, the CLI keeps Markdown.
+    summary_text = render_summary(summary)
     try:
-        write_text_atomic(summary_path, markdown_text)
+        write_text_atomic(summary_path, summary_text)
         write_text_atomic(summary_json_path, to_json(summary))
     except OSError as exc:
         msg = f"Не удалось сохранить саммари: {exc}"
         emit(ProgressEvent(STEP_EXPORT, "error", msg))
-        return RunResult("partial_success", transcript_path, None, None, transcript_text, markdown_text, msg)
+        return RunResult("partial_success", transcript_path, None, None, transcript_text, summary_text, msg)
     emit(ProgressEvent(STEP_EXPORT, "success", f"Готово: {summary_path}", path=summary_path))
 
     return RunResult(
@@ -454,7 +465,7 @@ def _summarize_and_export(
         summary_path=summary_path,
         summary_json_path=summary_json_path,
         transcript_text=transcript_text,
-        summary_text=markdown_text,
+        summary_text=summary_text,
         error_message=None,
     )
 
@@ -464,13 +475,14 @@ def resummarize_one(
     *,
     settings: Settings | None = None,
     progress: ProgressCallback | None = None,
+    summary_format: str = "markdown",
 ) -> RunResult:
     """Re-run summarization only, reusing the transcript already on disk.
 
     Used by the desktop "Повторить суммаризацию" action after a ``partial_success`` (or
     to regenerate with different settings) — it never re-transcribes, so long meetings
     are not re-processed. Requires ``options.transcript_path`` to point at a saved
-    transcript.
+    transcript. ``summary_format`` is as in :func:`run_one_file`.
     """
     from providers.factory import make_summarizer  # noqa: PLC0415
     from transcript import Transcript  # noqa: PLC0415
@@ -529,4 +541,5 @@ def resummarize_one(
         summary_json_path=summary_json_path,
         transcript_text=transcript_text,
         emit=emit,
+        summary_format=summary_format,
     )

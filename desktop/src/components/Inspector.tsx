@@ -144,6 +144,7 @@ function ResultInspector({ result, settings, runMode, audioPath, editedSummary, 
     await bridge.revealPath(path);
   };
 
+  // The editor holds the Telegram-ready plain text itself, so the clipboard gets it verbatim.
   const copy = async () => {
     await navigator.clipboard.writeText(editedSummary);
     toast("Саммари скопировано", "ok");

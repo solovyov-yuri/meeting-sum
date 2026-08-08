@@ -197,7 +197,7 @@ def test_export_summary_subset_formats(tmp_path: Path) -> None:
     assert res["html_path"] is None
 
 
-def test_save_summary_overwrites_markdown_and_json(tmp_path: Path) -> None:
+def test_save_summary_overwrites_legacy_markdown_and_json(tmp_path: Path) -> None:
     summary_path = tmp_path / "meeting_summary.txt"
     summary_path.write_text("старое", encoding="utf-8")
     res = desktop_bridge.save_summary(
@@ -207,7 +207,7 @@ def test_save_summary_overwrites_markdown_and_json(tmp_path: Path) -> None:
             "mode": "medium",
         }
     )
-    # Markdown file holds the edited text verbatim.
+    # Entries written before the plain-text switch still hold Markdown — it must still parse.
     assert summary_path.read_text(encoding="utf-8").startswith("## Тема встречи\nНовый текст")
     # JSON sibling is re-derived (structured) from the edited Markdown.
     json_path = Path(res["json_path"])
@@ -245,6 +245,10 @@ def test_run_recap_success_writes_history(tmp_path: Path, patch_factory: None, d
 
     assert result.status == "success"
     assert (tmp_path / "tr.txt").exists()
+    # The desktop's summary .txt (and the text handed to the editor) is the plain Telegram form.
+    summary_file = (tmp_path / "sum.txt").read_text(encoding="utf-8")
+    assert summary_file == result.summary_text
+    assert not summary_file.startswith("#") and "\n#" not in summary_file  # no Markdown headings
 
     history = desktop_bridge.get_history()["items"]
     assert len(history) == 1
@@ -581,6 +585,36 @@ def test_read_text_binary_in_scope_handled(data_dir: Path) -> None:
     res = desktop_bridge.read_text(str(f))
     assert res["exists"] is False
     assert "error" in res
+
+
+def test_save_summary_round_trips_the_plain_text(tmp_path: Path) -> None:
+    # The desktop edits the plain text itself: the .txt keeps it verbatim and the .json is
+    # re-derived from it, so a reopened item shows the edits and exports reflect them.
+    summary_path = tmp_path / "meeting_summary.txt"
+    plain = "ТЕМА ВСТРЕЧИ\n\nНовый текст.\n\n" + "━" * 20 + "\n\nТЕМА: A\n\nРешения и задачи:\n• Сделать."
+    res = desktop_bridge.save_summary({"summary_text": plain, "summary_path": str(summary_path), "mode": "medium"})
+
+    assert summary_path.read_text(encoding="utf-8") == plain
+    data = json.loads(Path(res["json_path"]).read_text(encoding="utf-8"))
+    assert data["blocks"][0]["heading"] == "Тема встречи"  # case restored for the other formats
+    assert data["blocks"][0]["paragraphs"] == ["Новый текст."]
+    assert data["blocks"][1]["heading"] == "Тема: A"
+    assert data["blocks"][1]["groups"] == [{"label": "Решения и задачи", "items": ["Сделать."]}]
+
+
+def test_export_summary_from_edited_plain_text(tmp_path: Path) -> None:
+    # No base .json (or an unusable one) → the export parses the edited plain text.
+    res = desktop_bridge.export_summary(
+        {
+            "summary_text": "ТЕМА ВСТРЕЧИ\n\nИз простого текста.\n\nРешения и задачи:\n• Сделать.",
+            "formats": ["markdown", "plain"],
+            "target_dir": str(tmp_path),
+            "base_name": "m",
+            "mode": "medium",
+        }
+    )
+    assert "## Тема встречи\nИз простого текста." in Path(res["markdown_path"]).read_text(encoding="utf-8")
+    assert "• Сделать." in Path(res["plain_path"]).read_text(encoding="utf-8")
 
 
 def test_export_summary_missing_dir_raises(tmp_path: Path) -> None:

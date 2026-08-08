@@ -9,10 +9,11 @@ from models import Block, Group, MeetingSummary
 # The single source of truth for every output format is the structured ``MeetingSummary`` — a flat
 # list of ``Block`` (free-text heading + prose + labeled ``Group`` sub-lists). It is produced either
 # by validating the LLM's rich JSON (``summary_schema.parse_summary_json``, which maps it onto blocks
-# with the standard starter labels below) or by parsing the canonical Markdown (``parse_summary``).
+# with the standard starter labels below) or by parsing an edited summary back (``parse_summary_text``
+# → ``parse_plain`` for the desktop's editable plain text, ``parse_summary`` for Markdown).
 # All renderers take the object, so the formats share one structure and differ only in formatting:
-#   - Markdown  → ``render_markdown``  (canonical/editable: ``##`` block, ``###`` group, ``- `` items)
-#   - Plain     → ``to_plain``         (upper-case block headers, ``━`` separators, inline ``• ``)
+#   - Markdown  → ``render_markdown``  (export/CLI: ``##`` block, ``###`` group, ``- `` items)
+#   - Plain     → ``to_plain``         (Telegram-ready: CAPS headers, ``━`` separators, ``• `` per line)
 #   - HTML      → ``to_html``          (``<h2>``/``<h3>``/``<ul>``/``<p>`` + CSS)
 #   - JSON      → ``to_json``          (``{mode, blocks:[…]}``)
 #
@@ -67,26 +68,30 @@ def _upper_heading(text: str) -> str:
 
 
 def to_plain(summary: MeetingSummary) -> str:
-    """Render as structured plain text: upper-case headers, ``━`` rules, inline ``• `` bullets."""
+    """Render as Telegram-ready plain text.
+
+    No markup at all (no ``#``/``*``/backticks): upper-case headers, ``━`` rules between top-level
+    sections, one ``• `` bullet per line under its label, and a blank line between every heading,
+    paragraph, list and section — so a copy-paste into Telegram keeps the layout.
+    """
     parts: list[str] = []
     emitted = False
     for block in summary.blocks:
-        if block.heading or block.paragraphs:
-            if emitted and block.heading:
+        if block.heading:
+            if emitted:
                 parts.append(_SEP)
-            header = _upper_heading(block.heading) if block.heading else None
-            para = "\n".join(block.paragraphs)
-            if header and para:
-                parts.append(f"{header}\n{para}")
-            elif header:
-                parts.append(header)
-            elif para:
-                parts.append(para)
-            emitted = True
+            parts.append(_upper_heading(block.heading))
+        # One part, so soft-wrapped prose keeps its line breaks instead of gaining a blank line
+        # between every line (``parse_summary`` yields one "paragraph" per source line).
+        if block.paragraphs:
+            parts.append("\n".join(block.paragraphs))
         for group in block.groups:
-            bullets = " ".join(f"• {it}" for it in group.items)
-            parts.append(f"{group.label}: {bullets}" if group.label else bullets)
-            emitted = True
+            if not group.items:
+                continue
+            bullets = "\n".join(f"• {it}" for it in group.items)
+            label = group.label.strip().rstrip(":").strip() if group.label else None
+            parts.append(f"{label}:\n{bullets}" if label else bullets)
+        emitted = emitted or bool(block.heading or block.paragraphs or block.groups)
     return "\n\n".join(p for p in parts if p).strip()
 
 
@@ -274,3 +279,99 @@ def parse_summary(markdown: str, mode: str) -> MeetingSummary:
 
     flush_block()
     return MeetingSummary(mode=mode, blocks=tuple(blocks))
+
+
+# ── Plain text → object (the desktop's editable form) ────────────────────────
+
+
+def _restore_case(heading: str) -> str:
+    """Undo ``_upper_heading``: ``ТЕМА ВСТРЕЧИ`` → ``Тема встречи``, ``ТЕМА: A`` → ``Тема: A``.
+
+    Upper-casing is lossy, so this is a best guess for the *other* formats (Markdown/HTML/JSON);
+    the plain text itself is unaffected because ``to_plain`` upper-cases again. An all-caps
+    acronym inside a heading does not survive.
+    """
+    if ":" in heading:
+        label, rest = heading.split(":", 1)
+        return f"{label.capitalize()}:{rest}"
+    return heading.capitalize()
+
+
+def _is_plain_heading(line: str) -> bool:
+    """A plain-text section header: its label (before any ``:``) is all upper-case."""
+    label = line.split(":", 1)[0]
+    return any(ch.isalpha() for ch in label) and label == label.upper()
+
+
+def parse_plain(text: str, mode: str) -> MeetingSummary:
+    """Parse the plain-text form (what ``to_plain`` renders) back into blocks.
+
+    Line rules: ``━`` rules are dropped (sections come from headers), an upper-case line opens a
+    block, ``• `` fills the current list, a line ending in ``:`` labels the next list, anything
+    else is prose. The guarantee is text idempotence — ``to_plain(parse_plain(t)) == t`` for text
+    ``to_plain`` produced — not a faithful round-trip of arbitrary typing (an all-caps sentence
+    reads as a header, and heading case is restored heuristically).
+    """
+    blocks: list[Block] = []
+    heading: str | None = None
+    paragraphs: list[str] = []
+    groups: list[Group] = []
+    group_label: str | None = None
+    group_items: list[str] = []
+    group_open = False
+
+    def flush_group() -> None:
+        nonlocal group_open, group_label, group_items
+        if group_open:
+            if group_items:
+                groups.append(Group(label=group_label, items=tuple(group_items)))
+            elif group_label:  # a label nobody put bullets under — keep the words as prose
+                paragraphs.append(f"{group_label}:")
+            group_open = False
+            group_label = None
+            group_items = []
+
+    def flush_block() -> None:
+        nonlocal heading, paragraphs, groups
+        flush_group()
+        if heading or paragraphs or groups:
+            blocks.append(Block(heading=heading, paragraphs=tuple(paragraphs), groups=tuple(groups)))
+        heading = None
+        paragraphs = []
+        groups = []
+
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if not line or set(line) <= {"━"}:
+            continue
+        if line.startswith("•"):
+            if not group_open:
+                group_open = True
+                group_label = None
+                group_items = []
+            group_items.append(line[1:].strip())
+        elif _is_plain_heading(line):
+            flush_block()
+            heading = _restore_case(line)
+        elif line.endswith(":"):
+            flush_group()
+            group_open = True
+            group_label = line[:-1].strip()
+            group_items = []
+        else:
+            flush_group()  # prose ends the current list
+            paragraphs.append(line)
+
+    flush_block()
+    return MeetingSummary(mode=mode, blocks=tuple(blocks))
+
+
+def parse_summary_text(text: str, mode: str) -> MeetingSummary:
+    """Parse an edited summary, whichever form it is in.
+
+    The desktop edits plain text, but history entries written before that change (and the CLI's
+    output) hold Markdown — sniff for Markdown markers so reopening an old item still parses.
+    """
+    if re.search(r"^\s*(#{1,6}\s|[-*]\s)", text, flags=re.MULTILINE):
+        return parse_summary(text, mode)
+    return parse_plain(text, mode)

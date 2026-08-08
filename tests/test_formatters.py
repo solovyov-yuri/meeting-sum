@@ -1,6 +1,6 @@
 import json
 
-from formatters import parse_summary, render_markdown, to_html, to_json, to_plain
+from formatters import parse_plain, parse_summary, parse_summary_text, render_markdown, to_html, to_json, to_plain
 from models import Block, Group, MeetingSummary
 
 # The Meeting Summary.pdf / preview references as a structured object (block model).
@@ -52,32 +52,51 @@ MEDIUM = MeetingSummary(
 )
 
 
-# ── to_plain (Meeting Summary.pdf layout) — must stay byte-identical across the model swap ──
+# ── to_plain (Telegram copy-paste layout) — the exact expected text, byte for byte ──
 
 
-def test_to_plain_medium_matches_pdf_layout() -> None:
+def test_to_plain_medium_matches_telegram_layout() -> None:
     sep = "━" * 20
     expected = "\n\n".join(
         [
-            "ТЕМА ВСТРЕЧИ\nОбсудили коммуникации по разработке, изменения в реестре "
-            "нерегламентных изменений и внедрение проверок качества кода.",
+            "ТЕМА ВСТРЕЧИ",
+            "Обсудили коммуникации по разработке, изменения в реестре нерегламентных изменений "
+            "и внедрение проверок качества кода.",
             sep,
             "ТЕМА: Оценка проверок аксессоров",
-            "Ключевые обсуждения: • Команда уточнила наличие и статус проверок аксессоров. "
-            "• Проверки пока не проектировались и взяты в бэклог. "
+            "Ключевые обсуждения:\n"
+            "• Команда уточнила наличие и статус проверок аксессоров.\n"
+            "• Проверки пока не проектировались и взяты в бэклог.\n"
             "• Нужна оценка объёма реализации для планирования фронта работ.",
-            "Решения и задачи: • Дать оценку объёма реализации до 10 числа. "
+            "Решения и задачи:\n"
+            "• Дать оценку объёма реализации до 10 числа.\n"
             "• Сроки реализации определить после оценки.",
             sep,
             "ТЕМА: Коммуникации по разработке",
-            "Ключевые обсуждения: • Единая площадка по разработке обязательна для всех стримов.",
-            "Решения и задачи: • Назначить и обеспечить регулярное участие представителей команд.",
+            "Ключевые обсуждения:\n• Единая площадка по разработке обязательна для всех стримов.",
+            "Решения и задачи:\n• Назначить и обеспечить регулярное участие представителей команд.",
             sep,
-            "КУРЬЁЗ ВСТРЕЧИ\nLegacy-потоки сравнили с ранами, которые пока «зашивают бытовой "
-            "иголкой», но всё же лучше перейти на стерильные инструменты.",
+            "КУРЬЁЗ ВСТРЕЧИ",
+            "Legacy-потоки сравнили с ранами, которые пока «зашивают бытовой иголкой», "
+            "но всё же лучше перейти на стерильные инструменты.",
         ]
     )
     assert to_plain(MEDIUM) == expected
+
+
+def test_to_plain_carries_no_markup() -> None:
+    # Telegram gets pasted text as-is: no Markdown/HTML leftovers may reach it.
+    out = to_plain(MEDIUM)
+    assert not any(ch in out for ch in "#*`<>")
+    for line in out.split("\n"):
+        assert line == line.strip()  # no leading indentation to mangle the paste
+
+
+def test_to_plain_keeps_wrapped_prose_as_one_paragraph() -> None:
+    # parse_summary yields one "paragraph" per source line, so a soft-wrapped paragraph in the
+    # editor must not gain a blank line between its lines when pasted into Telegram.
+    s = MeetingSummary(mode="brief", blocks=(Block(heading="Тема встречи", paragraphs=("Первая строка,", "её продолжение.")),))
+    assert to_plain(s) == "ТЕМА ВСТРЕЧИ\n\nПервая строка,\nеё продолжение."
 
 
 def test_to_plain_bare_prose() -> None:
@@ -85,6 +104,17 @@ def test_to_plain_bare_prose() -> None:
     out = to_plain(brief)
     assert out == "Кратко обсудили сроки."
     assert "━" not in out
+
+
+def test_to_plain_group_label_keeps_a_single_colon() -> None:
+    # An LLM (or a user editing the Markdown) may already end the label with ":".
+    s = MeetingSummary(mode="medium", blocks=(Block(groups=(Group("Решения и задачи:", ("Пункт.",)),)),))
+    assert to_plain(s) == "Решения и задачи:\n• Пункт."
+
+
+def test_to_plain_skips_empty_groups() -> None:
+    s = MeetingSummary(mode="medium", blocks=(Block(heading="Тема: X", groups=(Group("Пусто", ()),)),))
+    assert to_plain(s) == "ТЕМА: X"
 
 
 # ── to_html (common structure — same headings as Markdown/plain) ─────────────
@@ -154,3 +184,41 @@ def test_to_json_block_structure() -> None:
     assert data["blocks"][1]["groups"][0]["label"] == "Ключевые обсуждения"
     assert data["blocks"][1]["groups"][0]["items"][0].startswith("Команда уточнила")
     assert data["blocks"][-1]["heading"] == "Курьёз встречи"
+
+
+# ── parse_plain (the desktop's editable form) ────────────────────────────────
+
+
+def test_plain_round_trip_is_idempotent() -> None:
+    # The guarantee for the editable plain text: re-rendering what was parsed changes nothing.
+    text = to_plain(MEDIUM)
+    assert to_plain(parse_plain(text, "medium")) == text
+
+
+def test_parse_plain_recovers_the_structure() -> None:
+    s = parse_plain(to_plain(MEDIUM), "medium")
+    assert [b.heading for b in s.blocks] == ["Тема встречи", "Тема: Оценка проверок аксессоров", "Тема: Коммуникации по разработке", "Курьёз встречи"]
+    assert s.blocks[1].groups[0].label == "Ключевые обсуждения"
+    assert s.blocks[1].groups[1].items == ("Дать оценку объёма реализации до 10 числа.", "Сроки реализации определить после оценки.")
+    # Restored heading case reaches the other formats.
+    assert "## Тема встречи" in render_markdown(s)
+
+
+def test_parse_plain_keeps_a_label_without_bullets() -> None:
+    # A label the user left empty must not vanish on save; it degrades to prose and stays stable.
+    text = "ТЕМА: A\n\nЗаметки:"
+    s = parse_plain(text, "medium")
+    assert s.blocks[0].paragraphs == ("Заметки:",)
+    assert to_plain(s) == text
+
+
+def test_parse_plain_ignores_separators_and_blank_lines() -> None:
+    s = parse_plain("ТЕМА ВСТРЕЧИ\n\n" + "━" * 20 + "\n\nПрозa.", "brief")
+    assert len(s.blocks) == 1
+    assert s.blocks[0].paragraphs == ("Прозa.",)
+
+
+def test_parse_summary_text_picks_the_parser() -> None:
+    # Plain text (current editor) vs Markdown (entries written before the switch, and the CLI).
+    assert parse_summary_text("ТЕМА ВСТРЕЧИ\n\n• пункт", "medium").blocks[0].groups[0].items == ("пункт",)
+    assert parse_summary_text("## Тема встречи\n- пункт", "medium").blocks[0].groups[0].items == ("пункт",)

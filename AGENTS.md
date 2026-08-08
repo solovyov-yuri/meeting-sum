@@ -66,7 +66,7 @@ src/
 ├── config.py         # nested frozen Settings dataclasses + Settings.load() (yaml → env, strict validation)
 ├── transcript.py     # Segment + Transcript (frozen); from_file / to_text / to_file_format
 ├── formatters.py     # render from the structured MeetingSummary: render_markdown/to_plain/to_html/
-│                     #   to_json + parse_summary() (Markdown→object, the editable-text/export path)
+│                     #   to_json + parse_summary()/parse_plain() (text→object, the edit/export path)
 ├── models.py         # MeetingSummary / Section / Action — structured summary, the single source of truth
 ├── summary_schema.py # JSON schema for response_format + parse_summary_json() (LLM JSON → MeetingSummary)
 ├── utils.py          # write_text_atomic()
@@ -127,13 +127,12 @@ Non-obvious semantics:
   `partial_success` / `cancelled` flows); and `desktop_bridge._streaming` / `main` (translate to NDJSON
   `error` lines — the `# noqa: BLE001 - boundary` sites). Do **not** "let exceptions fly" in workflows: it
   would break the bridge's partial-success contract.
-- **CLI owns everything around the providers.** Each command drives transcribe → write transcript → summarize →
-  format → write summary, persisting the transcript before the LLM call (surviving an LLM failure),
-  short-circuiting on empty transcription, and branching on output format. The CLI does **not** route
-  through `workflows.run_one_file`: it deliberately keeps English messages and single-file-per-`--format`
-  output, whereas the desktop uses Russian `RunResult` messages and always writes `.txt`+`.json`. This
-  divergence is intentional and documented (`docs/desktop-tauri-spec.md` §4 / roadmap ARCH-001) — do not
-  "unify" it without an explicit i18n + output-semantics decision from the owner.
+- **CLI ↔ desktop divergence.** `run`/`summarize`/`batch` do route through `workflows.run_one_file` /
+  `resummarize_one`, but the CLI owns what surrounds them: its own English messages and exit codes, and
+  `--format` deciding what it echoes, while the desktop uses the Russian `RunResult` messages. The
+  summary `.txt` form is a per-caller argument (`summary_format`): Markdown for the CLI, plain text for
+  the desktop. This divergence is intentional and documented (`docs/desktop-tauri-spec.md` §4 / roadmap
+  ARCH-001) — do not "unify" it without an explicit i18n + output-semantics decision from the owner.
 - **Cooperative cancellation.** The desktop cancel is a flag file (path passed in the bridge payload), polled
   by `run_one_file` between steps; it returns a real `RunResult("cancelled")`. The Rust shell must not kill
   the bridge process (see `docs/desktop-bridge-contract.md` §6).
@@ -148,8 +147,11 @@ Non-obvious semantics:
   formats. `workflows._generate_summary()` tries JSON generation (`response_format`, modes in
   `JSON_PROMPTS` only) → `parse_summary_json`; any failure (provider rejects `response_format`,
   invalid JSON, schema mismatch) falls back to the text prompt + `formatters.parse_summary`. The
-  canonical/editable form is Markdown (`render_markdown`); exports re-parse the possibly-edited
-  Markdown via `parse_summary`, so that parser is permanent — keep the render/parse round-trip exact.
+  editable form depends on the front-end (`summary_format`): the desktop writes/edits Telegram-ready
+  plain text (`to_plain` ↔ `parse_plain`), the CLI keeps Markdown (`render_markdown` ↔
+  `parse_summary`). Saving and exporting re-parse the possibly-edited text through
+  `parse_summary_text`, which sniffs which of the two it is — so both parsers are permanent and each
+  render/parse round-trip must stay exact.
 - **Immutable transcript.** `Transcript.segments` is `tuple[Segment, ...]`.
 - **Preprocessing.** The `preprocess` command always runs ffmpeg (ignores `enabled`, since invoking it is itself
   the request); `transcribe`/`run`/`batch` use `prepared_audio()`, which respects `enabled`.
