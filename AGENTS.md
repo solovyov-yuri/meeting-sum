@@ -62,7 +62,9 @@ window flashes) stays **unverified until the user runs the app**.
 **Honesty about verification.** Never claim a check passed unless you actually ran it in this session. If a
 check is impossible here (Rust/Tauri build, GPU transcription, a live LLM endpoint), say so explicitly and
 list what you did verify and what remains unverified. A false "verified" is worse than an honest gap. (See
-`docs/desktop-agent-checklist.md`.)
+`docs/desktop-agent-checklist.md`.) Saying it once is not enough: add a line to
+`docs/manual-qa-pending.md` (what you changed → how to check it) so the debt accumulates somewhere the
+user can work through, instead of being remembered only by whoever wrote it.
 
 **Docs are part of the change.** If you change behaviour this file, `docs/desktop-bridge-contract.md`,
 `docs/desktop-tauri-spec.md` or the README describe, update that document in the same change. A contract
