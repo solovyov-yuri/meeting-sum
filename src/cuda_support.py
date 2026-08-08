@@ -119,24 +119,30 @@ def download_cuda_libs(on_progress: ProgressCallback | None = None, cancel: Canc
     total = sum(size for *_, size in resolved) or 0
     done = 0
 
-    for pkg, ver, url, _size in resolved:
-        check_cancel()
-        if on_progress:
-            on_progress(done, total, f"Загрузка {pkg} {ver}…")
-        with tempfile.NamedTemporaryFile(suffix=".whl", delete=False) as tmp:
-            tmp_path = Path(tmp.name)
+    # The wheel is written into a temp dir and only read/deleted after its handle is closed: on
+    # Windows a still-open file cannot be unlinked (WinError 32), which used to abort the download
+    # right after the first package — leaving a half-extracted cache and no sentinel.
+    with tempfile.TemporaryDirectory(prefix="recap-cuda-") as tmp_dir:
+        for pkg, ver, url, _size in resolved:
+            check_cancel()
+            if on_progress:
+                on_progress(done, total, f"Загрузка {pkg} {ver}…")
+            tmp_path = Path(tmp_dir) / f"{pkg}-{ver}.whl"
             try:
-                with urllib.request.urlopen(url, timeout=60) as resp:  # noqa: S310 - PyPI files host
+                with (
+                    urllib.request.urlopen(url, timeout=60) as resp,  # noqa: S310 - PyPI files host
+                    tmp_path.open("wb") as tmp,
+                ):
                     while chunk := resp.read(1 << 20):
                         check_cancel()
                         tmp.write(chunk)
                         done += len(chunk)
                         if on_progress:
                             on_progress(min(done, total), total, f"Загрузка {pkg} {ver}…")
-                tmp.flush()
                 if on_progress:
                     on_progress(done, total, f"Распаковка {pkg}…")
-                _extract_dlls(tmp_path, dest)
+                if _extract_dlls(tmp_path, dest) == 0:
+                    raise RuntimeError(f"В пакете {pkg}=={ver} не найдено DLL — повторите загрузку")
             finally:
                 tmp_path.unlink(missing_ok=True)
 
