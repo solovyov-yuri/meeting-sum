@@ -2,6 +2,7 @@ import hashlib
 import io
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -261,3 +262,73 @@ def test_resolve_win_wheel_requires_a_published_digest(monkeypatch: pytest.Monke
 
     with pytest.raises(RuntimeError, match="sha256"):
         cuda_support._resolve_win_wheel("nvidia-cublas-cu12", "1.2.3")
+
+
+# ── GPU presence detection (runs before the ~2 GB download) ──────────────────────
+# The dev machine here HAS an NVIDIA card, so every case fakes the driver library: the tests must
+# assert on logic, not on the hardware they happen to run on.
+
+
+class _FakeFn:
+    """A ctypes function pointer stand-in: callable, with settable restype/argtypes."""
+
+    def __init__(self, impl):  # type: ignore[no-untyped-def]
+        self._impl = impl
+        self.restype = None
+        self.argtypes = None
+
+    def __call__(self, *args):  # type: ignore[no-untyped-def]
+        return self._impl(*args)
+
+
+def _fake_driver(*, init_rc: int = 0, count_rc: int = 0, count: int = 1, with_count: bool = True):  # type: ignore[no-untyped-def]
+    def _get_count(ptr):  # type: ignore[no-untyped-def]
+        ptr.contents.value = count
+        return count_rc
+
+    driver = SimpleNamespace(cuInit=_FakeFn(lambda _flags: init_rc))
+    if with_count:
+        driver.cuDeviceGetCount = _FakeFn(_get_count)
+    return driver
+
+
+def test_detect_gpu_true_when_driver_reports_a_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cuda_support, "_load_cuda_driver", lambda: _fake_driver(count=2))
+    assert cuda_support.detect_nvidia_gpu() is True
+
+
+def test_detect_gpu_false_without_driver_library(monkeypatch: pytest.MonkeyPatch) -> None:
+    # No nvcuda.dll / libcuda.so → the NVIDIA driver isn't installed → no usable GPU.
+    monkeypatch.setattr(cuda_support, "_load_cuda_driver", lambda: None)
+    assert cuda_support.detect_nvidia_gpu() is False
+
+
+def test_detect_gpu_false_when_cuinit_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cuda_support, "_load_cuda_driver", lambda: _fake_driver(init_rc=100))
+    assert cuda_support.detect_nvidia_gpu() is False
+
+
+def test_detect_gpu_false_when_no_devices(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cuda_support, "_load_cuda_driver", lambda: _fake_driver(count=0))
+    assert cuda_support.detect_nvidia_gpu() is False
+
+
+def test_detect_gpu_undetermined_when_count_call_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cuda_support, "_load_cuda_driver", lambda: _fake_driver(count_rc=3))
+    assert cuda_support.detect_nvidia_gpu() is None
+
+
+def test_detect_gpu_undetermined_when_symbol_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An unexpected driver ABI must yield "don't know" (callers then proceed), never a hard False.
+    monkeypatch.setattr(cuda_support, "_load_cuda_driver", lambda: _fake_driver(with_count=False))
+    assert cuda_support.detect_nvidia_gpu() is None
+
+
+@pytest.mark.parametrize(("value", "expected"), [("1", True), ("yes", True), ("0", False), ("no", False)])
+def test_detect_gpu_env_override_wins(monkeypatch: pytest.MonkeyPatch, value: str, expected: bool) -> None:
+    def _boom():  # type: ignore[no-untyped-def]
+        raise AssertionError("the driver must not be probed when the override is set")
+
+    monkeypatch.setattr(cuda_support, "_load_cuda_driver", _boom)
+    monkeypatch.setenv(cuda_support.GPU_OVERRIDE_ENV, value)
+    assert cuda_support.detect_nvidia_gpu() is expected

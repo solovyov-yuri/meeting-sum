@@ -143,17 +143,46 @@ def _ensure_cuda(
     cancelled: CancelCheck,
     failed: Callable[[str, str], RunResult],
 ) -> RunResult | None:
-    """Portable build only: download the GPU (CUDA) libs once before a cuda transcription run.
+    """Portable build only: check the hardware, then download the GPU (CUDA) libs once before a
+    cuda transcription run.
 
     Returns None to proceed; a cancelled/failed RunResult to abort. No-op on a dev/installer build
-    (CUDA ships in the venv) or when the device isn't ``cuda``. Progress streams as a ``download``
-    step and the run's cancel flag stops it mid-download.
+    (CUDA ships in the venv) or when the device is ``cpu``. The GPU check runs *before* the
+    ~2 GB download: on a machine without an NVIDIA card ``cuda`` fails right here with an
+    actionable message and downloads nothing, while ``auto`` falls back to CPU but says so out loud
+    (log + a ``transcribe`` warning event) instead of degrading silently. When the check cannot
+    determine the answer it never blocks — the run proceeds exactly as before. Progress streams as
+    a ``download`` step and the run's cancel flag stops it mid-download.
     """
     import sys  # noqa: PLC0415
 
-    if not getattr(sys, "frozen", False) or settings.transcription.model.device != "cuda":
+    device = settings.transcription.model.device
+    if not getattr(sys, "frozen", False) or device == "cpu":
         return None
-    from cuda_support import DownloadCancelled, download_cuda_libs, is_cuda_installed  # noqa: PLC0415
+    from cuda_support import (  # noqa: PLC0415
+        DownloadCancelled,
+        detect_nvidia_gpu,
+        download_cuda_libs,
+        is_cuda_installed,
+    )
+
+    gpu = detect_nvidia_gpu()
+    if gpu is False:
+        if device == "auto":
+            msg = "Видеокарта NVIDIA не найдена — распознавание пойдёт на CPU и займёт заметно больше времени."
+            logger.warning("No NVIDIA GPU detected; device=auto falls back to CPU")
+            emit(ProgressEvent(STEP_TRANSCRIBE, "warning", msg))
+            return None
+        logger.error("No NVIDIA GPU detected; device=cuda cannot work — skipping the CUDA download")
+        return failed(
+            STEP_DOWNLOAD,
+            "Видеокарта NVIDIA не найдена, а устройство распознавания задано как «cuda». "
+            "Библиотеки GPU (около 2 ГБ) не загружались — выберите «cpu» или «auto» в настройках.",
+        )
+    if device != "cuda":
+        return None  # auto + GPU present (or undetermined): behaviour unchanged, no download
+    if gpu is None:
+        logger.warning("Could not determine whether an NVIDIA GPU is present — continuing as configured")
 
     if is_cuda_installed():
         return None
