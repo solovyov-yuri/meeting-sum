@@ -51,6 +51,10 @@ check is impossible here (Rust/Tauri build, GPU transcription, a live LLM endpoi
 list what you did verify and what remains unverified. A false "verified" is worse than an honest gap. (See
 `docs/desktop-agent-checklist.md`.)
 
+**Docs are part of the change.** If you change behaviour this file, `docs/desktop-bridge-contract.md`,
+`docs/desktop-tauri-spec.md` or the README describe, update that document in the same change. A contract
+that outlives the code it describes is worse than no contract: the next agent obeys it.
+
 **Git:** never commit, create branches, or make other git changes without an explicit request from the user.
 
 ## Architecture
@@ -72,6 +76,10 @@ src/
 ├── utils.py          # write_text_atomic()
 ├── preprocessing.py  # preprocess_audio() + prepared_audio() context manager (ffmpeg)
 ├── prompts.py        # PROMPTS[lang][mode] + CHUNK_PROMPTS + JSON_PROMPTS[lang][mode]; get_prompt()
+├── cuda_support.py   # on-demand CUDA runtime download for the portable build (pure stdlib, no pip):
+│                     #   pinned cuBLAS/cuDNN wheels → DLL cache that whisper._set_cuda_paths() uses
+├── ollama_support.py # Ollama-only model presence check + streaming pull for the desktop
+│                     #   "model not installed" flow (pure stdlib, native /api/* endpoints)
 └── providers/
     ├── factory.py    # make_summarizer() / make_transcriber() — the single provider wiring point
     ├── whisper.py    # WhisperTranscriber (lazy faster_whisper import after CUDA path setup)
@@ -112,7 +120,8 @@ Non-obvious semantics:
   transcripts and merges per-chunk summaries; `truncate` cuts at the last newline before the limit.
 - `summarization.model.num_ctx` is Ollama's `options.num_ctx`; ignored by OpenAI/xAI.
 - `summarization.mode`: `brief` (2–3 sentences) | `medium` (topic + discussions + decisions) |
-  `detailed` (participants + timeline + tasks with owners).
+  `detailed` (participants + timeline + tasks with owners) | `lecture` (a study summary of a talk,
+  not meeting minutes). The authoritative list is `SUMMARY_MODES` in `prompts.py`.
 
 ## Key design rules
 
