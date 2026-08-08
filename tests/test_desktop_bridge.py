@@ -187,6 +187,69 @@ def test_export_summary_falls_back_from_old_format_json(tmp_path: Path) -> None:
     assert "Восстановлено из markdown" in md
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        pytest.param("", id="empty-file"),
+        pytest.param('{"mode":"medium","blocks":[{"heading":"A",', id="truncated"),
+        pytest.param("не json вовсе", id="not-json"),
+        pytest.param('{"mode":"medium","blocks":["строка"]}', id="block-not-object"),
+        pytest.param('{"mode":"medium","blocks":[{"heading":"A","paragraphs":[1]}]}', id="wrong-item-type"),
+    ],
+)
+def test_export_summary_falls_back_from_corrupt_json(tmp_path: Path, raw: str) -> None:
+    # A .json that is unreadable or fails validation must not sink the whole export: the summary
+    # text in the payload is intact, so the export renders from it.
+    broken = tmp_path / "m_summary.json"
+    broken.write_text(raw, encoding="utf-8")
+    res = desktop_bridge.export_summary(
+        {
+            "summary_json_path": str(broken),
+            "summary_text": "*Тема встречи*\nВосстановлено из текста",
+            "formats": ["markdown", "html"],
+            "target_dir": str(tmp_path),
+            "base_name": "m",
+            "mode": "medium",
+        }
+    )
+    assert "Восстановлено из текста" in Path(res["markdown_path"]).read_text(encoding="utf-8")
+    assert "Восстановлено из текста" in Path(res["html_path"]).read_text(encoding="utf-8")
+
+
+def test_export_summary_falls_back_from_non_utf8_json(tmp_path: Path) -> None:
+    broken = tmp_path / "m_summary.json"
+    broken.write_bytes(b'{"mode":"medium","blocks":[{"heading":"\xff\xfe\x00"}]}')
+    res = desktop_bridge.export_summary(
+        {
+            "summary_json_path": str(broken),
+            "summary_text": "ТЕМА ВСТРЕЧИ\n\nВосстановлено из текста",
+            "formats": ["markdown"],
+            "target_dir": str(tmp_path),
+            "base_name": "m",
+            "mode": "medium",
+        }
+    )
+    assert "Восстановлено из текста" in Path(res["markdown_path"]).read_text(encoding="utf-8")
+
+
+def test_export_summary_without_any_source_raises(tmp_path: Path) -> None:
+    # Corrupt .json *and* no usable text: fail loudly instead of writing four empty files.
+    broken = tmp_path / "m_summary.json"
+    broken.write_text("{не json", encoding="utf-8")
+    with pytest.raises(ValueError, match="Нечего экспортировать"):
+        desktop_bridge.export_summary(
+            {
+                "summary_json_path": str(broken),
+                "summary_text": "   ",
+                "formats": ["markdown", "json"],
+                "target_dir": str(tmp_path),
+                "base_name": "m",
+                "mode": "medium",
+            }
+        )
+    assert not (tmp_path / "m_summary.md").exists()
+
+
 def test_export_summary_subset_formats(tmp_path: Path) -> None:
     res = desktop_bridge.export_summary(
         {"summary_text": "x", "formats": ["json"], "target_dir": str(tmp_path), "base_name": "m"}

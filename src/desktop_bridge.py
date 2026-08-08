@@ -485,7 +485,7 @@ def _append_history(entry: dict[str, Any]) -> None:
 
 def export_summary(payload: dict[str, Any]) -> dict[str, Any]:
     from formatters import parse_summary_text, render_markdown, to_html, to_json, to_plain  # noqa: PLC0415
-    from summary_schema import load_summary_json  # noqa: PLC0415
+    from summary_schema import SummaryValidationError, load_summary_json  # noqa: PLC0415
 
     formats = payload.get("formats") or ["markdown", "plain", "html", "json"]
     target_dir = Path(payload["target_dir"])
@@ -499,17 +499,26 @@ def export_summary(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"Каталог для экспорта не существует: {target_dir}")
 
     # The base .json (written by the run and by "Сохранить") is the single source of truth: every
-    # exported format is rendered from it. Fall back to parsing the (edited) Markdown summary_text
-    # when there is no JSON, or when the JSON is an old pre-structured {mode, summary} file that
-    # deserializes to an empty object — otherwise a reopened old-format item would export blank.
+    # exported format is rendered from it. Fall back to parsing the (edited) summary_text when there
+    # is no JSON, when the JSON is an old pre-structured {mode, summary} file that deserializes to an
+    # empty object, or when the file on disk is corrupt (truncated, hand-edited, not UTF-8) —
+    # otherwise a reopened old-format item would export blank and a damaged file would block the
+    # export outright, even though the payload carries a perfectly good summary text.
     json_path = payload.get("summary_json_path")
     summary = None
     if json_path and Path(json_path).is_file():
-        summary = load_summary_json(Path(json_path).read_text(encoding="utf-8"))
-        if not summary.blocks:  # old/foreign JSON with no blocks → fall back to the Markdown
+        try:
+            summary = load_summary_json(Path(json_path).read_text(encoding="utf-8"))
+        except (SummaryValidationError, UnicodeDecodeError):
+            logger.warning("Base summary JSON is unusable; exporting from the text: %s", json_path, exc_info=True)
+            summary = None
+        if summary is not None and not summary.blocks:  # old/foreign JSON with no blocks
             summary = None
     if summary is None:
         summary = parse_summary_text(payload.get("summary_text") or "", mode)
+    if not summary.blocks:
+        # Nothing survived either source — writing four empty files would look like a successful export.
+        raise ValueError("Нечего экспортировать: текст саммари пуст, а файл .json отсутствует или повреждён")
     out: dict[str, Any] = {"markdown_path": None, "plain_path": None, "html_path": None, "json_path": None}
 
     if "markdown" in formats:

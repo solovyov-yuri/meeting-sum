@@ -297,7 +297,7 @@ Input:
 ```json
 {
   "summary_json_path": "C:/.../meeting_2026_06_19_summary.json",
-  "summary_text": "...edited plain text; Markdown from pre-plain entries (fallback if no/empty base json)...",
+  "summary_text": "...edited plain text; Markdown from pre-plain entries (fallback if the base json is missing/empty/corrupt)...",
   "formats": ["markdown", "plain", "html", "json"],
   "target_dir": "C:/meetings/output",
   "base_name": "meeting_2026_06_19",
@@ -315,6 +315,12 @@ Output:
   "json_path": "C:/.../meeting_2026_06_19_summary.json"
 }
 ```
+
+Источник данных для всех форматов — базовый `.json` (`summary_json_path`). Фолбэк на разбор
+`summary_text` срабатывает, если файла нет, если это старый `{mode, summary}` без `blocks`, а также
+если файл повреждён (обрезан, отредактирован руками, не UTF-8) — повреждённый `.json` больше не
+роняет экспорт целиком, а лишь пишется предупреждение в лог bridge. Если и текст пуст, экспорт
+завершается ошибкой `Нечего экспортировать: …` **до** записи файлов — пустые файлы не создаются.
 
 Ограничения на путь записи (все файлы кладутся строго в `target_dir`):
 
