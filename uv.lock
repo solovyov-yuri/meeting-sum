@@ -1115,7 +1115,7 @@ wheels = [
 
 [[package]]
 name = "recap"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "faster-whisper" },
@@ -1143,7 +1143,7 @@ requires-dist = [
     { name = "faster-whisper", specifier = ">=1.2.1,<2" },
     { name = "keyring", specifier = ">=25.0" },
     { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin'", specifier = ">=12.9.2.10" },
-    { name = "nvidia-cudnn-cu12", marker = "sys_platform != 'darwin'", specifier = ">=9.22.0.52" },
+    { name = "nvidia-cudnn-cu12", marker = "sys_platform != 'darwin'", specifier = ">=9.24.0.43" },
     { name = "openai", specifier = ">=2,<3" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13.0" },
