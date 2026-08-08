@@ -29,6 +29,8 @@ def test_summarize_help() -> None:
 def test_run_help() -> None:
     result = runner.invoke(app, ["run", "--help"])
     assert result.exit_code == 0
+    # Every supported summary mode must be discoverable from --help.
+    assert "lecture" in result.output
 
 
 def test_transcribe_missing_audio(tmp_path: Path) -> None:

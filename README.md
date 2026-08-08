@@ -41,7 +41,7 @@ transcription:
     name: large-v3
 summarization:
   # language: ru               # язык промптов LLM; по умолчанию ru
-  mode: medium                 # brief | medium | detailed
+  mode: medium                 # brief | medium | detailed | lecture
   max_transcript_chars: 60000  # лимит одного LLM-запроса; длинные транскрипты разбиваются на чанки (chunking_mode: chunk)
   model:
     provider: ollama           # openai | xai | ollama | lm-studio | vllm
@@ -171,6 +171,7 @@ summarization:
 | `brief` | 2–3 предложения, только суть, без структуры |
 | `medium` | Тема + ключевые обсуждения + решения и задачи (по умолчанию) |
 | `detailed` | Полный протокол: участники, ход обсуждения, задачи с ответственными и сроками |
+| `lecture` | Конспект лекции или доклада: разделы с тезисами, определениями и примерами + блок «Главное» |
 
 ### Полный пайплайн
 
@@ -190,7 +191,8 @@ uv run recap batch recordings/ -o out/ -m brief   # в отдельную пап
 uv run recap batch recordings/ -p openai --model gpt-4o
 ```
 
-Поддерживаемые расширения: `.wav`, `.mp3`, `.m4a`, `.ogg`.
+Поддерживаемые расширения: `.wav`, `.mp3`, `.m4a`, `.ogg`, `.flac`, `.mp4`, `.mkv`, `.webm`
+(у видеофайлов берётся звуковая дорожка). Тот же список действует для `run` и десктоп-приложения.
 
 Для каждого файла `{name}.{ext}` создаются:
 - `{name}.txt` — транскрипция
@@ -228,7 +230,7 @@ uv run recap run audio.wav -f json > summary.json
 | `-o, --output PATH` | transcribe, summarize | Файл вывода |
 | `-o, --output-dir PATH` | batch | Папка вывода (по умолчанию — папка с аудио) |
 | `-l, --language TEXT` | transcribe, run, batch | Язык аудио (`ru`, `en`, …) |
-| `-m, --mode TEXT` | summarize, run, batch | Режим: `brief` \| `medium` \| `detailed` |
+| `-m, --mode TEXT` | summarize, run, batch | Режим: `brief` \| `medium` \| `detailed` \| `lecture` |
 | `-f, --format TEXT` | summarize, run, batch | Формат вывода: `telegram` (по умолчанию) \| `json` |
 | `-p, --provider TEXT` | summarize, run, batch | Провайдер (см. таблицу выше) |
 | `--model TEXT` | summarize, run, batch | Модель LLM (переопределяет config) |
@@ -270,6 +272,8 @@ Rust-слой запускает второй entry point — `recap-bridge` (`p
 в `src/` и покрыта тестами. UI можно демонстрировать в браузере без Rust/GPU (встроенный mock-мост).
 
 - Разработка фронтенда и запуск реального приложения: [`desktop/README.md`](desktop/README.md).
+- Портативная сборка для Windows (распаковал и запустил `Recap.exe`, Python на машине не нужен):
+  [`docs/portable-build.md`](docs/portable-build.md).
 - Архитектура, контракт моста и спека: [`docs/desktop-tauri-spec.md`](docs/desktop-tauri-spec.md),
   [`docs/desktop-bridge-contract.md`](docs/desktop-bridge-contract.md).
 
