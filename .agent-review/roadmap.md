@@ -29,7 +29,7 @@
 | [DOC-004](issues/DOC-004.md) | README/CLI-help/spec не знают про lecture, новые расширения, portable | medium | small | done | 2026-08-08: lecture в --help/README/spec, 8 расширений, ссылка на portable-build |
 | [AGENT-013](issues/AGENT-013.md) | Долг ручной Windows-QA нигде не накапливается | medium | small | done | 2026-08-08: docs/manual-qa-pending.md + правило в AGENTS.md; засеян долгом этого прогона |
 | [SEC-008](issues/SEC-008.md) | Zip-slip в _extract_dlls | low | quick-win | done | 2026-08-08: валидация имени члена до создания файлов; PoC на pre-fix коде подтвердил побег |
-| [SEC-009](issues/SEC-009.md) | pull_model доверяет base_url из webview (SSRF) | low | quick-win | proposed | ревью 2026-07-05 |
+| [SEC-009](issues/SEC-009.md) | pull_model доверяет base_url из webview (SSRF) | low | quick-win | done | 2026-08-08: base_url/model резолвятся из настроек, как в check_model; payload игнорируется |
 | [REL-011](issues/REL-011.md) | Портативный ffmpeg.exe не находится мостом без ручного PATH | low | quick-win | done | 2026-08-08: поиск на стороне Python (вариант 2) — Rust не трогали, покрыто тестами |
 | [REL-012](issues/REL-012.md) | _force_utf8_io не переконфигурирует stdin | low | quick-win | done | 2026-08-08: stdin в том же цикле + тест на cp1251-поток |
 | [REL-013](issues/REL-013.md) | export_summary падает целиком на битом .json вместо фолбэка на Markdown | low | quick-win | done | 2026-08-08: фолбэк на текст + отказ до записи, если пусты оба источника |
@@ -43,7 +43,7 @@
 | [DOC-005](issues/DOC-005.md) | Доковая пыль: шапка spec противоречит телу; «338 tests»; step-комментарий | low | quick-win | done | 2026-08-08: все три пункта |
 | [AGENT-014](issues/AGENT-014.md) | Allowlist только в settings.local.json; общий settings.json не создан | low | quick-win | done | 2026-08-08: вариант 2 по решению владельца — .gitignore больше не обещает общий settings.json |
 | [AGENT-015](issues/AGENT-015.md) | Относительные allow-паттерны могут не покрывать составные вызовы | low | quick-win | wont-do | 2026-08-08: рекомендованный вариант — наблюдать; за прогон промптов на канонических командах не было |
-| [REL-014](issues/REL-014.md) | Ротация recap-bridge.log ломается при живом worker (Windows) | low | small | proposed | ревью 2026-07-05; hypothesis |
+| [REL-014](issues/REL-014.md) | Ротация recap-bridge.log ломается при живом worker (Windows) | low | small | done | 2026-08-08: гипотеза подтверждена (WinError 32 на rename), воркер пишет в отдельный файл |
 | [CODE-012](issues/CODE-012.md) | stepsForStatus красит не те шаги для не-full режимов истории | low | small | done | 2026-08-08: гипотеза подтверждена (fail-first тест), статус кладётся на видимый шаг режима |
 | [SEC-001](issues/SEC-001.md) | Живой API-ключ в открытом виде в config.yaml | high | quick-win | done | 2026-07-02: ключ убран из config.yaml, старый ротирован, ключ через env |
 | [REL-001](issues/REL-001.md) | UnicodeDecodeError не перехватывается при чтении транскрипта | high | quick-win | done | 2026-07-02: ловим (OSError, UnicodeDecodeError) в cli.py+workflows.py; тесты на оба пути |
@@ -253,6 +253,22 @@ Rust-логики и работает также при прямом запус�
 REL-010, `save_summary` — агент SEC-007, отмену resummarize — агент ARCH-005. Реально не хватало двух
 команд (`check_model`, `pull_model`) и устаревшего примера `get_settings` (без `output_dir` и
 `api_keys_configured`, с чужим `max_transcript_chars`).
+
+2026-08-08 — вне бэклога, найдено агентом при закрытии SEC-009 и починено сразу: `_streaming`
+разбирал `cancel_flag` ВНЕ error boundary. До дедупликации CODE-011 это стоило одного упавшего
+вызова, после — падения долгоживущего воркера вместе с прогретой Whisper-моделью. Коммит 2df2950.
+
+2026-08-08 — /burndown (финал волны 6) — done: SEC-009, CODE-011, REL-012, REL-014, DOC-003.
+REL-014 был `hypothesis` — подтвердил механику сам на Windows-питоне венва: `os.rename` файла,
+открытого другим (или тем же) процессом, даёт `PermissionError [WinError 32]`, а `logging` глотает
+это в `handleError`, теряя запись. Решение — вариант 1: воркер пишет в `recap-bridge-serve.log`,
+одиночные команды — в `recap-bridge.log`.
+
+2026-08-08 — ИТОГ ПРОГОНА. Из 32 issue ревью 2026-07-05: 30 done, CODE-008 → wont-do (не дефект),
+AGENT-015 → wont-do (рекомендованное действие — «наблюдать»). Плюс заведена и закрыта новая ARCH-007.
+Финальная проверка на чистом дереве: pytest 442, ruff, mypy, npm lint/test/build, cargo check+clippy —
+всё зелёное. Промежуточные прогоны шли на дереве с чужими незакоммиченными правками; авторитетен
+финальный. Весь долг ручной проверки на Windows — в docs/manual-qa-pending.md.
 
 2026-07-02 — финал. Все 40 issue закрыты. AGENT-003 (импорт подтверждён), AGENT-005 (allowlist через
 /update-config + deny uv), DEP-003 (uv lock выполнен пользователем). Tailwind 4 ждёт визуального обзора
