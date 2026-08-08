@@ -288,7 +288,7 @@ transcript — the partial_success recovery path («Повторить сумм�
 
 Input: same shape as `run_recap`, but `transcript_path` must point at an existing transcript on disk
 (`audio_path` is carried for history metadata only, not read). Progress events and the final output
-object are identical to `run_recap`.
+object are identical to `run_recap`, cancellation included (`cancel_flag`, see §6).
 
 ### `export_summary`
 
@@ -429,16 +429,22 @@ Output:
 - на каждый `run_recap`/`resummarize` Rust генерирует уникальный путь и передаёт его в payload
   как `cancel_flag` (ключ съедается мостом в `_streaming`, до сборки `RunOptions`);
 - по нажатию `Остановить` (`cancel_run`) watcher-поток в Rust создаёт этот файл;
-- `_streaming` строит `cancel = Path(cancel_flag).exists` и передаёт в `run_one_file`, который
-  проверяет флаг между этапами и возвращает `RunResult("cancelled", …)` — с сохранённым
-  `transcript_path`, если транскрипт уже записан;
+- `_streaming` строит `cancel = Path(cancel_flag).exists` и передаёт его и в `run_one_file`, и в
+  `resummarize_one`; оба проверяют флаг между этапами и возвращают `RunResult("cancelled", …)` — с
+  сохранённым `transcript_path`, если транскрипт уже записан (для resummarize он всегда на диске);
 - Rust дочитывает stdout до реального `result` (не синтезирует `cancelled` сам), поэтому отменённый
   запуск попадает в историю со статусом `cancelled` и указателем на транскрипт;
 - так как процесс не убит, `finally` в Python отрабатывает — временный WAV удаляется, ffmpeg не
   висит. Rust удаляет flag-файл по завершении запуска.
 
 Ограничение: во время самого этапа транскрибации (долгий, без прогресс-строк) отмена срабатывает
-только на его границе — это и есть текст предупреждения выше.
+только на его границе — это и есть текст предупреждения выше. То же и для суммаризации: это один
+длинный вызов LLM, и `LLMSummarizer` остаётся «тупым», поэтому флаг опрашивается вокруг вызова, а не
+внутри него. Практическая гранулярность для `resummarize`: до построения summarizer, после чтения
+транскрипта (до вызова) и сразу после того, как модель ответила. Последняя проверка общая с
+`run_recap` (она в `_summarize_and_export`): готовое саммари отбрасывается, на диск ничего не
+пишется, статус `cancelled`, транскрипт сохранён. Нажатие «Остановить» посреди генерации не обрывает
+HTTP-запрос: отмена применится, когда вызов вернётся.
 
 ## 7. Logging
 

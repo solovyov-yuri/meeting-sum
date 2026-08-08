@@ -681,11 +681,12 @@ def resummarize(
     payload: dict[str, Any],
     *,
     emit: workflows.ProgressCallback | None = None,
-    cancel: workflows.CancelCheck | None = None,  # noqa: ARG001 - accepted for a uniform streaming signature
+    cancel: workflows.CancelCheck | None = None,
 ) -> workflows.RunResult:
     """Re-run only summarization on an existing transcript and record a history entry.
 
     Used by "Повторить суммаризацию": no re-transcription, so long meetings are cheap to retry.
+    ``cancel`` is polled around the LLM call, so a stop lands in history as ``cancelled``.
     """
     options = _build_run_options(payload)
     settings = _load_settings()
@@ -694,7 +695,9 @@ def resummarize(
 
     _maybe_emit_privacy_warning(settings, provider, emit)
 
-    result = workflows.resummarize_one(options, settings=settings, progress=emit, summary_format=DESKTOP_SUMMARY_FORMAT)
+    result = workflows.resummarize_one(
+        options, settings=settings, progress=emit, cancel=cancel, summary_format=DESKTOP_SUMMARY_FORMAT
+    )
     _record_history(options, provider, settings, result, run_mode="summarize")
     return result
 

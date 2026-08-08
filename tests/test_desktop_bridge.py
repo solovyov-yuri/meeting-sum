@@ -316,6 +316,41 @@ def test_resummarize_reuses_transcript_and_writes_history(
     assert history[0]["status"] == "success"
 
 
+def test_streaming_resummarize_cancel_flag_records_cancelled_history(
+    tmp_path: Path, patch_factory: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The cancel flag must reach resummarize_one too: a stop lands in history as `cancelled`
+    # (not `success`), with the existing transcript untouched on disk.
+    import providers.factory as factory_mod
+
+    def boom(*args: object, **kwargs: object) -> object:
+        raise AssertionError("no provider must be built after cancellation")
+
+    monkeypatch.setattr(factory_mod, "make_transcriber", boom)
+    monkeypatch.setattr(factory_mod, "make_summarizer", boom)
+
+    transcript_path = tmp_path / "tr.txt"
+    transcript_path.write_text("[0.00s -> 1.00s] сохранённый текст\n", encoding="utf-8")
+    flag = tmp_path / "cancel.flag"
+    flag.write_text("x", encoding="utf-8")
+
+    payload = {
+        "audio_path": str(tmp_path / "meeting.wav"),
+        "transcript_path": str(transcript_path),
+        "summary_path": str(tmp_path / "sum.txt"),
+        "overrides": {"provider": "ollama", "mode": "medium"},
+        "cancel_flag": str(flag),
+    }
+    rc = desktop_bridge._streaming("resummarize", payload)
+
+    assert rc == 0
+    history = desktop_bridge.get_history()["items"]
+    assert [item["status"] for item in history] == ["cancelled"]
+    assert history[0]["transcript_path"] == str(transcript_path)
+    assert transcript_path.exists()
+    assert not (tmp_path / "sum.txt").exists()
+
+
 def test_run_recap_external_provider_warns(tmp_path: Path, patch_factory: None) -> None:
     audio = tmp_path / "meeting.wav"
     audio.write_bytes(b"RIFF" + b"\x00" * 32)

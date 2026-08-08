@@ -451,6 +451,36 @@ def test_run_one_file_cancel_after_transcribe_keeps_transcript(
     assert (tmp_path / "tr.txt").exists()
 
 
+def test_run_one_file_cancel_during_generation_discards_summary(
+    tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Stop pressed while the LLM is answering: the transcript stays on disk, the finished summary
+    # is discarded (nothing written) and the run reports `cancelled`, not `success`.
+    summarizer = FakeSummarizer("итоги")
+    stopped = {"now": False}
+
+    def summarize(text: str, structured: bool = False) -> str:
+        stopped["now"] = True
+        return "итоги"
+
+    monkeypatch.setattr(summarizer, "summarize", summarize)
+    _patch_providers(monkeypatch, Transcript(segments=(Segment(0.0, 1.0, "x"),)), summarizer)
+
+    options = RunOptions(
+        audio_path=audio_file,
+        transcript_path=tmp_path / "tr.txt",
+        summary_path=tmp_path / "sum.txt",
+        provider="ollama",
+    )
+    result = run_one_file(options, settings=Settings(), cancel=lambda: stopped["now"])
+
+    assert result.status == "cancelled"
+    assert result.transcript_path == tmp_path / "tr.txt"
+    assert (tmp_path / "tr.txt").exists()
+    assert result.summary_path is None
+    assert not (tmp_path / "sum.txt").exists()
+
+
 def test_run_one_file_unknown_provider_fails(tmp_path: Path, audio_file: Path) -> None:
     options = RunOptions(audio_path=audio_file, provider="grok")
     result = run_one_file(options, settings=Settings())
@@ -555,6 +585,76 @@ def test_resummarize_one_partial_on_llm_failure(tmp_path: Path, monkeypatch: pyt
     assert result.status == "partial_success"
     assert not (tmp_path / "sum.txt").exists()
     assert result.transcript_text is not None
+
+
+def test_resummarize_one_cancel_before_summarize(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Stop pressed before the LLM call: no summarizer is even built, the saved transcript stays
+    # on disk and is still pointed at by the result.
+    transcript_path = tmp_path / "tr.txt"
+    transcript_path.write_text("[0.00s -> 1.00s] текст\n", encoding="utf-8")
+
+    import providers.factory as factory_mod
+
+    def no_summarizer(*args: object, **kwargs: object) -> object:
+        raise AssertionError("summarizer must not be built after cancellation")
+
+    monkeypatch.setattr(factory_mod, "make_transcriber", _exploding_transcriber)
+    monkeypatch.setattr(factory_mod, "make_summarizer", no_summarizer)
+
+    options = RunOptions(
+        audio_path=tmp_path / "meeting.wav",
+        transcript_path=transcript_path,
+        summary_path=tmp_path / "sum.txt",
+        provider="ollama",
+    )
+    result = workflows.resummarize_one(options, settings=Settings(), cancel=lambda: True)
+
+    assert result.status == "cancelled"
+    assert result.transcript_path == transcript_path
+    assert transcript_path.exists()
+    assert not (tmp_path / "sum.txt").exists()
+
+
+def test_resummarize_one_cancel_during_generation_discards_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Summarization is one long LLM call: a stop pressed while the model answers takes effect at
+    # the boundary right after it returns — nothing is written and the status is `cancelled`.
+    transcript_path = tmp_path / "tr.txt"
+    transcript_path.write_text("[0.00s -> 1.00s] текст\n", encoding="utf-8")
+
+    import providers.factory as factory_mod
+
+    summarizer = FakeSummarizer("резюме")
+    monkeypatch.setattr(factory_mod, "make_transcriber", _exploding_transcriber)
+    monkeypatch.setattr(
+        factory_mod,
+        "make_summarizer",
+        lambda settings, provider, mode, model_override=None, summary_language=None: summarizer,
+    )
+
+    stopped = {"now": False}
+
+    def summarize(text: str, structured: bool = False) -> str:
+        stopped["now"] = True  # the user hits "Стоп" while the call is in flight
+        return "резюме"
+
+    monkeypatch.setattr(summarizer, "summarize", summarize)
+
+    options = RunOptions(
+        audio_path=tmp_path / "meeting.wav",
+        transcript_path=transcript_path,
+        summary_path=tmp_path / "sum.txt",
+        provider="ollama",
+    )
+    result = workflows.resummarize_one(options, settings=Settings(), cancel=lambda: stopped["now"])
+
+    assert result.status == "cancelled"
+    assert result.transcript_path == transcript_path
+    assert result.transcript_text is not None
+    assert result.summary_path is None
+    assert not (tmp_path / "sum.txt").exists()
+    assert not (tmp_path / "sum.json").exists()
 
 
 def test_humanize_error_timeout() -> None:

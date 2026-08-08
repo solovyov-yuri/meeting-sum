@@ -327,6 +327,7 @@ def run_one_file(
         transcript_text=transcript_text,
         emit=emit,
         summary_format=summary_format,
+        cancelled=cancelled,
     )
 
 
@@ -419,12 +420,17 @@ def _summarize_and_export(
     transcript_text: str,
     emit: ProgressCallback,
     summary_format: str,
+    cancelled: CancelCheck = _never_cancelled,
 ) -> RunResult:
     """Summarize an in-memory transcript and write the .txt/.json summaries.
 
     Shared by ``run_one_file`` and ``resummarize_one``, which build the ``summarizer`` once
     (during early validation) and hand it in. On LLM/IO failure returns ``partial_success``
     with the transcript paths preserved.
+
+    Generation is a single long provider call, so ``cancelled`` is polled around it, not inside
+    it (the summarizer stays dumb): a stop requested while the model is answering takes effect
+    as soon as the call returns, before anything is written.
     """
     from formatters import render_markdown, to_json, to_plain  # noqa: PLC0415
     from utils import write_text_atomic  # noqa: PLC0415
@@ -444,6 +450,10 @@ def _summarize_and_export(
         emit(ProgressEvent(STEP_SUMMARIZE, "error", msg))
         # partial_success: transcript is on disk, only summarization failed.
         return RunResult("partial_success", transcript_path, None, None, transcript_text, None, msg)
+    if cancelled():
+        msg = "Остановлено пользователем во время суммаризации."
+        emit(ProgressEvent(STEP_SUMMARIZE, "cancelled", msg))
+        return RunResult("cancelled", transcript_path, None, None, transcript_text, None, msg)
     emit(ProgressEvent(STEP_SUMMARIZE, "success", "Саммари готово."))
 
     emit(ProgressEvent(STEP_EXPORT, "running", "Сохранение результатов…"))
@@ -475,6 +485,7 @@ def resummarize_one(
     *,
     settings: Settings | None = None,
     progress: ProgressCallback | None = None,
+    cancel: CancelCheck | None = None,
     summary_format: str = "markdown",
 ) -> RunResult:
     """Re-run summarization only, reusing the transcript already on disk.
@@ -483,11 +494,16 @@ def resummarize_one(
     to regenerate with different settings) — it never re-transcribes, so long meetings
     are not re-processed. Requires ``options.transcript_path`` to point at a saved
     transcript. ``summary_format`` is as in :func:`run_one_file`.
+
+    ``cancel`` is the same cooperative check as in :func:`run_one_file`: polled at the step
+    boundaries around the single LLM call, it returns ``RunResult("cancelled", …)`` with the
+    existing transcript still pointed at, so nothing is lost.
     """
     from providers.factory import make_summarizer  # noqa: PLC0415
     from transcript import Transcript  # noqa: PLC0415
 
     emit = progress if progress is not None else _noop
+    cancelled = cancel if cancel is not None else _never_cancelled
     if settings is None:
         settings = Settings.load()
 
@@ -501,6 +517,14 @@ def resummarize_one(
         msg = f"Транскрипт не найден: {transcript_path}"
         emit(ProgressEvent(STEP_SUMMARIZE, "error", msg))
         return RunResult("failed", None, None, None, None, None, msg)
+
+    def stopped(text: str | None) -> RunResult:
+        msg = "Остановлено пользователем."
+        emit(ProgressEvent(STEP_SUMMARIZE, "cancelled", msg))
+        return RunResult("cancelled", transcript_path, None, None, text, None, msg)
+
+    if cancelled():
+        return stopped(None)
 
     try:
         summarizer = make_summarizer(settings, provider_name, mode_name, options.model, options.summary_language)
@@ -528,6 +552,9 @@ def resummarize_one(
         emit(ProgressEvent(STEP_EXPORT, "error", msg))
         return RunResult("partial_success", transcript_path, None, None, transcript_text, None, msg)
 
+    if cancelled():
+        return stopped(transcript_text)
+
     emit(ProgressEvent(STEP_TRANSCRIBE, "success", "Используется сохранённый транскрипт.", path=transcript_path))
     return _summarize_and_export(
         settings,
@@ -542,4 +569,5 @@ def resummarize_one(
         transcript_text=transcript_text,
         emit=emit,
         summary_format=summary_format,
+        cancelled=cancelled,
     )
