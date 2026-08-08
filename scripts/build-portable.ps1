@@ -52,16 +52,16 @@ $version = (Get-Content "desktop\src-tauri\tauri.conf.json" -Raw | ConvertFrom-J
 if (-not $SkipDeps) {
     Step "Syncing Python deps (uv sync)"
     Need uv
-    uv sync
-    # PyInstaller is a build-only tool; install it into the venv if missing.
-    if (-not (Test-Path $pyInstaller)) { uv pip install pyinstaller }
+    # PyInstaller is a build-only tool, declared in the `packaging` dependency group so its
+    # version is locked like everything else.
+    uv sync --group packaging
 }
 if (-not (Test-Path $venvPy)) { throw "venv not found at $venvPy — run 'uv sync' first." }
 
 # ── 2. Freeze the bridge ─────────────────────────────────────────────────────
 if (-not $SkipBridge) {
     Step "Freezing recap-bridge (PyInstaller)"
-    if (-not (Test-Path $pyInstaller)) { uv pip install pyinstaller }
+    if (-not (Test-Path $pyInstaller)) { throw "pyinstaller not found — run without -SkipDeps (uv sync --group packaging)." }
     & $pyInstaller --noconfirm `
         --distpath $bridgeDist `
         --workpath (Join-Path $root "dist\bridge-work") `

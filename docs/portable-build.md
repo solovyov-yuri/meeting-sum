@@ -33,12 +33,12 @@ frozen bridge) the project venv synced. Then, from the repo root in PowerShell:
 pwsh -File scripts\build-portable.ps1
 ```
 
-The script: `uv sync` → PyInstaller freeze (`packaging/recap-bridge.spec`) → `tauri build
+The script: `uv sync --group packaging` → PyInstaller freeze (`packaging/recap-bridge.spec`) → `tauri build
 --no-bundle` → assemble `dist/portable/Recap/` → zip. Useful flags for iterating:
 
 - `-SkipBridge` — reuse the last frozen bridge (the slow step).
 - `-SkipApp` — reuse the last app build.
-- `-SkipDeps` — skip `uv sync`.
+- `-SkipDeps` — skip `uv sync --group packaging` (PyInstaller must already be in the venv).
 - `-Ffmpeg <path>` — copy an `ffmpeg.exe` into the folder (see below).
 
 ## GPU support (downloaded on demand)
