@@ -571,11 +571,22 @@ def check_model() -> dict[str, Any]:
 
 
 def pull_model(payload: dict[str, Any], *, emit: Any, cancel: Any) -> workflows.RunResult:
-    """Streaming: pull the Ollama model, reporting progress as a ``download`` step."""
+    """Streaming: pull the configured Ollama model, reporting progress as a ``download`` step.
+
+    Target and model name are resolved from the saved settings, exactly like ``check_model`` — the
+    payload is deliberately not read. The UI only ever echoes back what ``check_model`` reported,
+    so nothing is lost, and a webview-supplied URL cannot turn this command into a POST to an
+    arbitrary address from the bridge process.
+    """
     import ollama_support  # noqa: PLC0415
 
-    base_url = payload["base_url"]
-    model = payload["model"]
+    model_cfg = _load_settings().summarization.model
+    base_url = model_cfg.base_url or PROVIDER_PRESETS.get(model_cfg.provider)
+    model = model_cfg.name
+    if model_cfg.provider != "ollama" or not base_url:
+        msg = "Загрузка моделей доступна только для Ollama."
+        emit(workflows.ProgressEvent(workflows.STEP_DOWNLOAD, "error", msg))
+        return workflows.RunResult("failed", None, None, None, None, None, msg)
 
     def on_progress(completed: int, total: int, status: str) -> None:
         pct = (completed / total) if total else None

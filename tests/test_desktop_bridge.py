@@ -576,6 +576,53 @@ def test_serve_reuses_transcriber_across_runs(
     assert len(desktop_bridge.get_history()["items"]) == 2  # both runs completed + recorded
 
 
+def test_pull_model_uses_saved_settings_not_payload(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The pull target comes from the saved config, like check_model — a payload-supplied address
+    # must not decide where the bridge POSTs.
+    import ollama_support
+
+    saved = desktop_bridge.get_settings()
+    saved["summarization"]["model"]["provider"] = "ollama"
+    saved["summarization"]["model"]["base_url"] = "http://127.0.0.1:11434/v1"
+    saved["summarization"]["model"]["name"] = "настроенная:latest"
+    desktop_bridge.save_settings(saved)
+
+    calls: list = []
+    monkeypatch.setattr(ollama_support, "pull_model", lambda *args, **kwargs: calls.append(args))
+
+    events: list = []
+    result = desktop_bridge.pull_model(
+        {"base_url": "http://evil.invalid/v1", "model": "чужая:latest"}, emit=events.append, cancel=None
+    )
+
+    assert result.status == "success"
+    assert [args[:2] for args in calls] == [("http://127.0.0.1:11434/v1", "настроенная:latest")]
+    assert all("evil.invalid" not in e.message for e in events)
+
+
+def test_pull_model_rejects_non_ollama_provider(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Only Ollama can pull; nothing must reach the network for any other provider.
+    import ollama_support
+
+    saved = desktop_bridge.get_settings()
+    saved["summarization"]["model"]["provider"] = "openai"
+    saved["summarization"]["model"]["base_url"] = None
+    desktop_bridge.save_settings(saved)
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise AssertionError("no pull must be attempted for a non-Ollama provider")
+
+    monkeypatch.setattr(ollama_support, "pull_model", boom)
+
+    events: list = []
+    result = desktop_bridge.pull_model(
+        {"base_url": "http://localhost:11434/v1", "model": "любая:latest"}, emit=events.append, cancel=None
+    )
+
+    assert result.status == "failed"
+    assert events[-1].status == "error"
+
+
 def _terminal_lines(out: str) -> list[dict]:
     """The framing the Rust host relies on: one `result`/`error` line ends each request."""
     return [obj for obj in (json.loads(line) for line in out.splitlines() if line.strip()) if obj["type"] != "progress"]
