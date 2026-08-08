@@ -11,6 +11,7 @@ these together with the pins in ``pyproject.toml``.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -72,14 +73,21 @@ def is_cuda_installed() -> bool:
     return sentinel.is_file() and sentinel.read_text(encoding="utf-8").strip() == _expected_marker()
 
 
-def _resolve_win_wheel(pkg: str, version: str) -> tuple[str, int]:
-    """Resolve the win_amd64 wheel URL (and size) for a pinned package via the PyPI JSON API."""
+def _resolve_win_wheel(pkg: str, version: str) -> tuple[str, str, int]:
+    """Resolve the win_amd64 wheel URL, its expected sha256 and its size via the PyPI JSON API.
+
+    The digest comes from the same response as the URL and is mandatory: without it the downloaded
+    DLLs could not be verified before they are extracted and later loaded into the process.
+    """
     api = f"https://pypi.org/pypi/{pkg}/{version}/json"
     with urllib.request.urlopen(api, timeout=30) as resp:  # noqa: S310 - fixed https PyPI host
         data = json.load(resp)
     for entry in data.get("urls", []):
         if entry.get("filename", "").endswith("win_amd64.whl"):
-            return entry["url"], int(entry.get("size") or 0)
+            sha256 = (entry.get("digests") or {}).get("sha256") or ""
+            if not sha256:
+                raise RuntimeError(f"PyPI не сообщил sha256 для {pkg}=={version} — загрузка небезопасна")
+            return entry["url"], sha256, int(entry.get("size") or 0)
     raise RuntimeError(f"Не найден win_amd64 wheel для {pkg}=={version}")
 
 
@@ -100,6 +108,9 @@ def _extract_dlls(whl_path: Path, dest: Path) -> int:
 
 def download_cuda_libs(on_progress: ProgressCallback | None = None, cancel: CancelCheck | None = None) -> Path:
     """Download the pinned cuBLAS+cuDNN wheels and extract their DLLs into ``cuda_libs_dir()``.
+
+    Every wheel is hashed while it streams in and is extracted only when the digest matches the
+    sha256 PyPI publishes for it; a mismatch raises before anything is unpacked or marked complete.
 
     Reports byte progress across both wheels via ``on_progress`` and polls ``cancel`` frequently;
     on cancel it raises ``DownloadCancelled`` (the sentinel stays absent, so it re-offers). Returns
@@ -123,11 +134,12 @@ def download_cuda_libs(on_progress: ProgressCallback | None = None, cancel: Canc
     # Windows a still-open file cannot be unlinked (WinError 32), which used to abort the download
     # right after the first package — leaving a half-extracted cache and no sentinel.
     with tempfile.TemporaryDirectory(prefix="recap-cuda-") as tmp_dir:
-        for pkg, ver, url, _size in resolved:
+        for pkg, ver, url, expected_sha, _size in resolved:
             check_cancel()
             if on_progress:
                 on_progress(done, total, f"Загрузка {pkg} {ver}…")
             tmp_path = Path(tmp_dir) / f"{pkg}-{ver}.whl"
+            digest = hashlib.sha256()  # hashed as it streams in — the wheel is never held in memory
             try:
                 with (
                     urllib.request.urlopen(url, timeout=60) as resp,  # noqa: S310 - PyPI files host
@@ -136,9 +148,16 @@ def download_cuda_libs(on_progress: ProgressCallback | None = None, cancel: Canc
                     while chunk := resp.read(1 << 20):
                         check_cancel()
                         tmp.write(chunk)
+                        digest.update(chunk)
                         done += len(chunk)
                         if on_progress:
                             on_progress(min(done, total), total, f"Загрузка {pkg} {ver}…")
+                actual_sha = digest.hexdigest()
+                if actual_sha != expected_sha:
+                    raise RuntimeError(
+                        f"Контрольная сумма {pkg}=={ver} не совпала (ожидалось {expected_sha}, "
+                        f"получено {actual_sha}) — файл повреждён или подменён, установка прервана"
+                    )
                 if on_progress:
                     on_progress(done, total, f"Распаковка {pkg}…")
                 if _extract_dlls(tmp_path, dest) == 0:

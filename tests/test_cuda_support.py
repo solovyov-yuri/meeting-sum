@@ -1,3 +1,4 @@
+import hashlib
 import io
 import zipfile
 from pathlib import Path
@@ -103,7 +104,11 @@ def test_download_extracts_all_packages_and_marks_complete(monkeypatch: pytest.M
     monkeypatch.setattr(cuda_support.sys, "frozen", True, raising=False)
 
     wheels = {"nvidia-cublas-cu12": _wheel_bytes("cublas", "cublas64_12.dll"), "nvidia-cudnn-cu12": _wheel_bytes("cudnn", "cudnn64_9.dll")}
-    monkeypatch.setattr(cuda_support, "_resolve_win_wheel", lambda pkg, ver: (f"https://example.invalid/{pkg}", len(wheels[pkg])))
+    monkeypatch.setattr(
+        cuda_support,
+        "_resolve_win_wheel",
+        lambda pkg, ver: (f"https://example.invalid/{pkg}", hashlib.sha256(wheels[pkg]).hexdigest(), len(wheels[pkg])),
+    )
     monkeypatch.setattr(cuda_support.urllib.request, "urlopen", lambda url, timeout=0: _FakeResponse(wheels[url.rsplit("/", 1)[1]]))
 
     progress: list[tuple[int, int, str]] = []
@@ -122,7 +127,9 @@ def test_download_cancelled_mid_stream_raises_cancelled(monkeypatch: pytest.Monk
     monkeypatch.setattr(cuda_support.sys, "frozen", True, raising=False)
 
     payload = _wheel_bytes("cublas", "cublas64_12.dll")
-    monkeypatch.setattr(cuda_support, "_resolve_win_wheel", lambda pkg, ver: ("https://example.invalid/w", len(payload)))
+    monkeypatch.setattr(
+        cuda_support, "_resolve_win_wheel", lambda pkg, ver: ("https://example.invalid/w", hashlib.sha256(payload).hexdigest(), len(payload))
+    )
     monkeypatch.setattr(cuda_support.urllib.request, "urlopen", lambda url, timeout=0: _FakeResponse(payload))
 
     calls = {"n": 0}
@@ -144,9 +151,41 @@ def test_download_rejects_a_wheel_without_dlls(monkeypatch: pytest.MonkeyPatch, 
     empty = io.BytesIO()
     with zipfile.ZipFile(empty, "w") as zf:
         zf.writestr("nvidia_cublas_cu12-1.2.3.dist-info/RECORD", b"record")
-    monkeypatch.setattr(cuda_support, "_resolve_win_wheel", lambda pkg, ver: ("https://example.invalid/w", 0))
-    monkeypatch.setattr(cuda_support.urllib.request, "urlopen", lambda url, timeout=0: _FakeResponse(empty.getvalue()))
+    payload = empty.getvalue()
+    monkeypatch.setattr(
+        cuda_support, "_resolve_win_wheel", lambda pkg, ver: ("https://example.invalid/w", hashlib.sha256(payload).hexdigest(), 0)
+    )
+    monkeypatch.setattr(cuda_support.urllib.request, "urlopen", lambda url, timeout=0: _FakeResponse(payload))
 
     with pytest.raises(RuntimeError, match="не найдено DLL"):
         cuda_support.download_cuda_libs()
     assert cuda_support.is_cuda_installed() is False
+
+
+def test_download_rejects_a_wheel_with_a_wrong_digest(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # Tampered/corrupted bytes: the digest check fires before extraction, so nothing is unpacked and
+    # the completion sentinel stays absent — the next run re-offers the download.
+    monkeypatch.setenv("RECAP_CUDA_DIR", str(tmp_path / "cuda"))
+    monkeypatch.setattr(cuda_support.sys, "frozen", True, raising=False)
+
+    payload = _wheel_bytes("cublas", "cublas64_12.dll")
+    monkeypatch.setattr(cuda_support, "_resolve_win_wheel", lambda pkg, ver: ("https://example.invalid/w", "00" * 32, len(payload)))
+    monkeypatch.setattr(cuda_support.urllib.request, "urlopen", lambda url, timeout=0: _FakeResponse(payload))
+
+    with pytest.raises(RuntimeError, match="Контрольная сумма"):
+        cuda_support.download_cuda_libs()
+
+    assert not cuda_support._sentinel().exists()
+    assert not (cuda_support.cuda_libs_dir() / "nvidia/cublas/bin/cublas64_12.dll").exists()
+    assert cuda_support.is_cuda_installed() is False
+
+
+def test_resolve_win_wheel_requires_a_published_digest(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A PyPI entry without digests must fail loudly instead of downloading unverified DLLs.
+    entry = {"filename": "nvidia_cublas_cu12-1.2.3-py3-none-win_amd64.whl", "url": "https://example.invalid/w", "size": 10, "digests": {}}
+    payload = io.BytesIO(b'{"urls": []}')
+    monkeypatch.setattr(cuda_support.urllib.request, "urlopen", lambda url, timeout=0: _FakeResponse(payload.getvalue()))
+    monkeypatch.setattr(cuda_support.json, "load", lambda resp: {"urls": [entry]})
+
+    with pytest.raises(RuntimeError, match="sha256"):
+        cuda_support._resolve_win_wheel("nvidia-cublas-cu12", "1.2.3")
