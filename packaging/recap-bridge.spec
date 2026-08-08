@@ -1,15 +1,14 @@
 # PyInstaller spec for the `recap-bridge` Python sidecar (one-dir).
 #
-# Freezes src/desktop_bridge.py + all deps (faster-whisper, ctranslate2, openai, keyring, …) plus
-# the NVIDIA CUDA runtime DLLs into dist/recap-bridge/, which scripts/build-portable.ps1 copies next
-# to the Tauri app. The app then runs it with no Python install (see docs/portable-build.md).
+# Freezes src/desktop_bridge.py + all deps (faster-whisper, ctranslate2, openai, keyring, …) into
+# dist/recap-bridge/, which scripts/build-portable.ps1 copies next to the Tauri app. The app then
+# runs it with no Python install (see docs/portable-build.md).
 #
 # Build from the repo root:  pyinstaller packaging/recap-bridge.spec  (with the project venv active)
 #
-# CUDA is the fragile part: the NVIDIA libs live in the venv at Lib/site-packages/nvidia/*/bin and
-# are added here as data so providers.whisper._set_cuda_paths() (frozen branch) finds them at
-# <bundle>/nvidia/*/bin. If GPU transcription fails in the portable build, verify those folders made
-# it into dist/recap-bridge/_internal/nvidia/*/bin.
+# CUDA is the fragile part, and it is deliberately outside this bundle: see the note on `datas`
+# below. If GPU transcription fails in the portable build, look at the on-demand download cache
+# (src/cuda_support.py), not at the frozen folder.
 
 from pathlib import Path
 

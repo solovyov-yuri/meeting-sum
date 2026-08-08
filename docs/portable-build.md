@@ -70,7 +70,7 @@ automatically:
 ## Verification status
 
 The deterministic parts are tested here (`cuda_support` dir/marker/extract logic; the Rust and Python
-plumbing compiles and passes 338 tests + lint + types). But the parts that only exist at runtime on
+plumbing compiles and passes the full pytest suite + lint + types). But the parts that only exist at runtime on
 Windows are **unverified from this environment**: the PyInstaller freeze (hidden imports may need
 tuning), the actual GPU CUDA download + dlopen, and the packaged exe launching the bundled bridge.
 Treat the first `build-portable.ps1` run — and the first GPU download from Settings — as the real

@@ -69,7 +69,7 @@ class RunOptions:
 
 @dataclass(frozen=True)
 class ProgressEvent:
-    step: str  # preprocess | transcribe | summarize | export
+    step: str  # one of the STEP_* constants above
     status: str  # pending | running | success | warning | error | cancelled
     message: str
     percent: float | None = None
