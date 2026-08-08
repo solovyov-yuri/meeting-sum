@@ -112,6 +112,7 @@ Output:
   "audio": "data/meeting.wav",
   "transcript": "data/transcript.txt",
   "summary": "data/summary.txt",
+  "output_dir": null,
   "privacy_ack": false,
   "transcription": {
     "language": "ru",
@@ -128,7 +129,7 @@ Output:
   "summarization": {
     "language": null,
     "mode": "medium",
-    "max_transcript_chars": 60000,
+    "max_transcript_chars": 42000,
     "timeout_seconds": 60.0,
     "retries": 2,
     "chunking_mode": "chunk",
@@ -151,11 +152,20 @@ Output:
     "loudness_range": 11.0,
     "highpass_hz": null,
     "keep_temp": false
+  },
+  "api_keys_configured": {
+    "openai": true,
+    "xai": false,
+    "ollama": false,
+    "lm-studio": false,
+    "vllm": false
   }
 }
 ```
 
-Важно: `api_key` не возвращать открытым текстом.
+Важно: `api_key` не возвращать открытым текстом. `api_keys_configured` — маска наличия ключа по
+каждому провайдеру (не только по сохранённому), чтобы UI показывал статус при переключении
+провайдера в черновике настроек.
 
 ### `save_settings`
 
@@ -231,7 +241,7 @@ Input:
 ```
 
 `run_mode` selects the pipeline slice (default `"full"`) — **distinct from `overrides.mode`**, which is
-the *summary* mode (brief/medium/detailed):
+the *summary* mode (brief/medium/detailed/lecture — `SUMMARY_MODES` в `prompts.py`):
 
 - `"full"` — preprocess (forced on) → transcribe → summarize → export.
 - `"transcribe"` — preprocess → transcribe only; returns `success` with the transcript written and no
@@ -362,6 +372,50 @@ Output:
 путь, который фронтенд получает из результата запуска или из открытой записи истории; записать
 куда-либо ещё команда не позволяет. Каталог данных приложения тоже недоступен для записи: в нём
 лежат `config.yaml` и `history.json`.
+
+### `check_model`
+
+Проверка, что настроенная модель суммаризации доступна. Нужна только Ollama: у остальных провайдеров
+нечего «доустанавливать», поэтому ответ всегда `installed: true`. Недоступная Ollama тоже даёт
+`installed: true` — запуск не блокируется, реальную ошибку покажет сам прогон.
+
+Input:
+
+```json
+{}
+```
+
+Output:
+
+```json
+{
+  "installed": false,
+  "provider": "ollama",
+  "model": "qwen3.5:latest",
+  "base_url": "http://localhost:11434/v1"
+}
+```
+
+### `pull_model` (стриминг)
+
+Загрузка модели в Ollama по ответу `check_model` с `installed: false`. Стримит те же
+`{"type":"progress"}`-строки, что `run_recap`, шагом `download`, и завершается обычным `result`
+с `RunResult`-формой (пути пустые). Отменяется тем же `cancel_flag` (§6); Ollama при этом продолжает
+качать на своей стороне, поэтому отменённая загрузка может всё же завершиться и попасть в кэш.
+
+Input:
+
+```json
+{
+  "base_url": "http://localhost:11434/v1",
+  "model": "qwen3.5:latest",
+  "cancel_flag": "C:/.../recap-cancel-<uuid>.flag"
+}
+```
+
+Молчащий сокет не подвешивает загрузку навсегда: таймаут ограничивает ожидание каждого чтения
+(`ollama_support.PULL_IDLE_TIMEOUT`), но не общую длительность — многогигабайтная модель качается
+столько, сколько идут байты.
 
 ### `get_history`
 
