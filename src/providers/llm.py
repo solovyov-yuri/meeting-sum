@@ -5,8 +5,17 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 
 from prompts import CHUNK_PROMPTS, PROMPTS, SUMMARY_PROMPT_MEDIUM_RU  # noqa: F401 — re-exported for consumers
+from summary_schema import SUMMARY_JSON_SCHEMA
 
 logger = logging.getLogger(__name__)
+
+# The strongest structured-output request we can make, and the weaker one every OpenAI-compatible
+# server understands. ``_final_call`` walks down this ladder; below it, the caller's text path.
+_SCHEMA_FORMAT: dict = {
+    "type": "json_schema",
+    "json_schema": {"name": "meeting_summary", "schema": SUMMARY_JSON_SCHEMA},
+}
+_JSON_OBJECT_FORMAT: dict = {"type": "json_object"}
 
 
 def _truncate(text: str, max_chars: int) -> str:
@@ -175,11 +184,27 @@ class LLMSummarizer:
         return f"[Часть {i}]\n{self._call_llm(messages, client, console)}"
 
     def _final_call(self, text: str, client, console, structured: bool) -> str:
-        """The final (whole-transcript or merged) summarization pass, optionally as JSON."""
+        """The final (whole-transcript or merged) summarization pass, optionally as JSON.
+
+        Structured output degrades one step at a time: ask for the summary schema, and if the
+        server refuses that ``response_format`` (older Ollama/lm-studio/vllm builds answer 400/422),
+        ask again for a plain JSON object — the prompt alone then carries the shape. A refusal of
+        *that* propagates, which is what puts the caller on its text-prompt fallback.
+        """
+        import openai  # noqa: PLC0415 — deferred to keep CLI startup fast
+
         template = self._json_prompt if structured else None
-        response_format = {"type": "json_object"} if structured else None
         messages = self._build_messages(text, prompt_template=template)
-        return self._call_llm(messages, client, console, response_format=response_format)
+        if not structured:
+            return self._call_llm(messages, client, console)
+        try:
+            return self._call_llm(messages, client, console, response_format=_SCHEMA_FORMAT)
+        except (openai.BadRequestError, openai.UnprocessableEntityError) as exc:
+            logger.warning(
+                "Provider rejected response_format=json_schema (%s); retrying with json_object.",
+                exc,
+            )
+        return self._call_llm(messages, client, console, response_format=_JSON_OBJECT_FORMAT)
 
     def _chunked_summarize(self, transcript_text: str, client, console, structured: bool = False, _depth: int = 0) -> str:
         chunks = self._split_into_chunks(transcript_text)

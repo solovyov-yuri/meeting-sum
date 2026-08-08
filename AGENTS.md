@@ -154,8 +154,10 @@ Non-obvious semantics:
   (raw text, or JSON when `structured=True`). It stays "dumb": validation/parsing live above it.
 - **Structured summary pipeline.** The `MeetingSummary` object is the single source of truth for all
   formats. `workflows._generate_summary()` tries JSON generation (`response_format`, modes in
-  `JSON_PROMPTS` only) → `parse_summary_json`; any failure (provider rejects `response_format`,
-  invalid JSON, schema mismatch) falls back to the text prompt + `formatters.parse_summary`. The
+  `JSON_PROMPTS` only) → `parse_summary_json`. `LLMSummarizer` asks for `SUMMARY_JSON_SCHEMA` first
+  and retries once with plain `json_object` if the server refuses that `response_format` (so a
+  refusal costs two provider calls); any failure after that (invalid JSON, schema mismatch) falls
+  back to the text prompt + `formatters.parse_summary`. The
   editable form depends on the front-end (`summary_format`): the desktop writes/edits Telegram-ready
   plain text (`to_plain` ↔ `parse_plain`), the CLI keeps Markdown (`render_markdown` ↔
   `parse_summary`). Saving and exporting re-parse the possibly-edited text through

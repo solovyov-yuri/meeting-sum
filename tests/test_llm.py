@@ -591,3 +591,136 @@ def test_local_provider_chunks_summarized_in_order(monkeypatch: pytest.MonkeyPat
     assert "[Часть 1]\nsum-AAA" in merge_user
     assert "[Часть 2]\nsum-BBB" in merge_user
     assert merge_user.index("[Часть 1]") < merge_user.index("[Часть 2]")
+
+
+# ── Structured output (response_format) ──────────────────────────────────────
+
+
+def _make_recording_openai(
+    calls: list[dict | None],
+    *,
+    fail_types: tuple[str, ...] = (),
+    response: str = "{}",
+):
+    """Fake openai.OpenAI recording the ``response_format`` of every call.
+
+    ``fail_types`` names the ``response_format["type"]`` values the server refuses with a 400,
+    so a degrade ladder can be driven step by step. Unlike ``_make_fake_openai`` this appends
+    per call instead of merging into one dict, so multi-call sequences stay visible.
+    """
+    import openai
+
+    class FakeChunk:
+        def __init__(self, text: str) -> None:
+            self.choices = [type("C", (), {"delta": type("D", (), {"content": text})()})()]
+
+    class FakeStream:
+        def __enter__(self) -> "FakeStream":
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            pass
+
+        def __iter__(self):
+            yield FakeChunk(response)
+
+    class FakeCompletions:
+        def create(self, model: str, messages: list, stream: bool, **kwargs) -> FakeStream:
+            fmt = kwargs.get("response_format")
+            calls.append(fmt)
+            if fmt is not None and fmt["type"] in fail_types:
+                raise openai.BadRequestError("unsupported response_format", response=MagicMock(), body=None)
+            return FakeStream()
+
+    class FakeChat:
+        completions = FakeCompletions()
+
+    class FakeClient:
+        chat = FakeChat()
+
+    return lambda **kw: FakeClient()
+
+
+def _structured_summarizer(**kwargs) -> LLMSummarizer:
+    return LLMSummarizer(
+        model="test",
+        base_url="http://localhost:1234/v1",
+        json_prompt=("system", "user {transcript}"),
+        max_retries=0,
+        retry_backoff=0,
+        **kwargs,
+    )
+
+
+def test_structured_call_sends_the_summary_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    """structured=True asks for the schema itself, not just 'some JSON'."""
+    from summary_schema import SUMMARY_JSON_SCHEMA
+
+    calls: list[dict | None] = []
+    monkeypatch.setattr("openai.OpenAI", _make_recording_openai(calls, response='{"intro": "x"}'))
+
+    result = _structured_summarizer().summarize("content", structured=True)
+
+    assert result == '{"intro": "x"}'
+    assert len(calls) == 1
+    fmt = calls[0]
+    assert fmt is not None
+    assert fmt["type"] == "json_schema"
+    assert fmt["json_schema"]["name"] == "meeting_summary"
+    # Identity, so the wired schema can never drift from the published constant.
+    assert fmt["json_schema"]["schema"] is SUMMARY_JSON_SCHEMA
+
+
+def test_structured_degrades_to_json_object_when_schema_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A server that rejects json_schema still gets a JSON answer — no text-path downgrade."""
+    calls: list[dict | None] = []
+    monkeypatch.setattr(
+        "openai.OpenAI",
+        _make_recording_openai(calls, fail_types=("json_schema",), response='{"intro": "x"}'),
+    )
+    monkeypatch.setattr("time.sleep", lambda _: None)
+
+    result = _structured_summarizer().summarize("content", structured=True)
+
+    assert result == '{"intro": "x"}'
+    assert [c["type"] for c in calls if c is not None] == ["json_schema", "json_object"]
+
+
+def test_structured_propagates_when_json_object_also_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both rungs refused → the error reaches the caller, which is what enables its text fallback."""
+    import openai
+
+    calls: list[dict | None] = []
+    monkeypatch.setattr(
+        "openai.OpenAI",
+        _make_recording_openai(calls, fail_types=("json_schema", "json_object")),
+    )
+    monkeypatch.setattr("time.sleep", lambda _: None)
+
+    with pytest.raises(openai.BadRequestError):
+        _structured_summarizer().summarize("content", structured=True)
+
+    assert [c["type"] for c in calls if c is not None] == ["json_schema", "json_object"]
+
+
+def test_unstructured_call_sends_no_response_format(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict | None] = []
+    monkeypatch.setattr("openai.OpenAI", _make_recording_openai(calls, response="plain summary"))
+
+    result = _structured_summarizer().summarize("content")
+
+    assert result == "plain summary"
+    assert calls == [None]
+
+
+def test_chunked_structured_asks_for_schema_only_on_the_final_merge(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Per-chunk passes stay plain text; only the merge is asked for the schema."""
+    calls: list[dict | None] = []
+    monkeypatch.setattr("openai.OpenAI", _make_recording_openai(calls, response="chunk summary"))
+
+    summarizer = _structured_summarizer(max_chars=50, chunking_mode="chunk")
+    summarizer.summarize("AAA" * 12 + "\n" + "BBB" * 12, structured=True)
+
+    assert calls[:-1] == [None, None]  # two chunk calls, no response_format
+    assert calls[-1] is not None
+    assert calls[-1]["type"] == "json_schema"
