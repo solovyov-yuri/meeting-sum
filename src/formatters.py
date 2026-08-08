@@ -305,14 +305,33 @@ def _is_plain_heading(line: str) -> bool:
     return any(ch.isalpha() for ch in label) and label == label.upper()
 
 
+def _list_label(line: str, next_line: str) -> str | None:
+    """The label of a list: a ``Метка:`` line sitting directly above its first ``• `` bullet.
+
+    ``to_plain`` renders a label flush against its bullets and puts a blank line between every
+    other pair of parts, so adjacency — not case — is what separates a label from a header
+    (``ИТОГИ:``, ``TODO:`` are ordinary labels) and from prose that merely ends in a colon.
+    """
+    if not next_line.startswith("•") or not line.endswith(":"):
+        return None
+    return line[:-1].strip() or None
+
+
 def parse_plain(text: str, mode: str) -> MeetingSummary:
     """Parse the plain-text form (what ``to_plain`` renders) back into blocks.
 
-    Line rules: ``━`` rules are dropped (sections come from headers), an upper-case line opens a
-    block, ``• `` fills the current list, a line ending in ``:`` labels the next list, anything
-    else is prose. The guarantee is text idempotence — ``to_plain(parse_plain(t)) == t`` for text
+    Blank lines carry structure here, so unlike the Markdown parser this one reads them. Line
+    rules: ``━`` rules are dropped (sections come from headers), a colon line directly above a
+    bullet labels that list whatever its case, any other upper-case line opens a block, ``• ``
+    fills the current list — a blank line between bullets starts the next one — and anything
+    else, including a colon line with no bullet under it, is prose.
+
+    The guarantee is text idempotence — ``to_plain(parse_plain(t)) == t`` for every ``t`` that
     ``to_plain`` produced — not a faithful round-trip of arbitrary typing (an all-caps sentence
-    reads as a header, and heading case is restored heuristically).
+    reads as a header, and heading case is restored heuristically). Hand-edited text stays
+    stable too, but a blank line the user adds means something: it demotes a label to prose and
+    splits one list into two. Both re-render to the very same text (so the Telegram paste is
+    unchanged); only the structure the other formats show differs.
     """
     blocks: list[Block] = []
     heading: str | None = None
@@ -327,8 +346,6 @@ def parse_plain(text: str, mode: str) -> MeetingSummary:
         if group_open:
             if group_items:
                 groups.append(Group(label=group_label, items=tuple(group_items)))
-            elif group_label:  # a label nobody put bullets under — keep the words as prose
-                paragraphs.append(f"{group_label}:")
             group_open = False
             group_label = None
             group_items = []
@@ -342,27 +359,36 @@ def parse_plain(text: str, mode: str) -> MeetingSummary:
         paragraphs = []
         groups = []
 
-    for raw in text.split("\n"):
+    lines = text.split("\n")
+    blank_before = True
+    for i, raw in enumerate(lines):
         line = raw.strip()
-        if not line or set(line) <= {"━"}:
+        if not line:
+            blank_before = True
             continue
+        if set(line) <= {"━"}:
+            continue
+        next_line = lines[i + 1].strip() if i + 1 < len(lines) else ""
+        label = _list_label(line, next_line)
         if line.startswith("•"):
-            if not group_open:
+            if not group_open or blank_before:  # a blank line between bullets ends the list
+                flush_group()
                 group_open = True
                 group_label = None
                 group_items = []
             group_items.append(line[1:].strip())
+        elif label:
+            flush_group()
+            group_open = True
+            group_label = label
+            group_items = []
         elif _is_plain_heading(line):
             flush_block()
             heading = _restore_case(line)
-        elif line.endswith(":"):
-            flush_group()
-            group_open = True
-            group_label = line[:-1].strip()
-            group_items = []
         else:
-            flush_group()  # prose ends the current list
+            flush_group()  # prose ends the current list; a bare "Метка:" stays prose verbatim
             paragraphs.append(line)
+        blank_before = False
 
     flush_block()
     return MeetingSummary(mode=mode, blocks=tuple(blocks))
