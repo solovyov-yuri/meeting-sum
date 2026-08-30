@@ -13,6 +13,12 @@
 | № | Предложение | Статус | Отметки |
 |---|---|---|---|
 | [0001](0001-agent-integration.md) | Интеграция Recap с пользовательскими агентами | planned | MCP/typed gateway, устойчивые jobs, installer integration и privacy boundary |
+| [0002](0002-desktop-audio-capture.md) | Запись аудио в desktop-приложении | planned | MVP: микрофон в локальный файл; системный звук и микширование — отдельный этап |
+| [0003](0003-application-media-import.md) | Саммаризация контента из приложений и по ссылке | planned | MVP: вставка публичной YouTube-ссылки, subtitles-first, локальный fallback через медиа |
+| [0004](0004-speaker-diarization.md) | Разделение transcript по спикерам | planned | Offline diarization после ASR, анонимные метки и ручное переименование |
+| [0005](0005-local-library-and-search.md) | Локальная библиотека и полнотекстовый поиск | planned | SQLite-каталог как восстанавливаемый индекс файлов, поиск, фильтры и теги |
+| [0006](0006-summary-profiles.md) | Настраиваемые профили саммари | planned | Сохранённые профили поверх MeetingSummary; произвольные JSON-схемы вне MVP |
+| [0007](0007-action-items-and-integrations.md) | Задачи и интеграции с рабочими системами | planned | Сначала typed action items и подтверждение, затем adapters внешних систем |
 
 У `planned`-предложения отсутствие реализации уже выражено статусом и не создаёт issue. Если
 `in-progress` или `shipped` предложение не закрывает обещанный сценарий, оставшийся разрыв
