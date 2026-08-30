@@ -276,6 +276,16 @@ Rust-слой запускает второй entry point — `recap-bridge` (`p
 - Архитектура, контракт моста и спека: [`docs/desktop-tauri-spec.md`](docs/desktop-tauri-spec.md),
   [`docs/desktop-bridge-contract.md`](docs/desktop-bridge-contract.md).
 
+## Решения, техдолг и развитие
+
+- Принятые архитектурные решения: [`docs/adr/`](docs/adr/README.md).
+- Актуальный технический долг и известные проблемы: [`docs/issues/roadmap.md`](docs/issues/roadmap.md).
+- Предложения по развитию продукта: [`docs/proposals/README.md`](docs/proposals/README.md).
+- Датированные снимки ревью и ручной проверки: [`docs/reviews/`](docs/reviews/).
+
+Issue описывает разрыв относительно уже принятого поведения; новая возможность является proposal,
+а не issue. Статусы живут только в индексах соответствующих списков.
+
 ## Telegram Markdown
 
 Саммари форматируется в **Telegram Markdown v1** (`parse_mode="Markdown"`):

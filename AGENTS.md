@@ -66,15 +66,40 @@ window flashes) stays **unverified until the user runs the app**.
 **Honesty about verification.** Never claim a check passed unless you actually ran it in this session. If a
 check is impossible here (Rust/Tauri build, GPU transcription, a live LLM endpoint), say so explicitly and
 list what you did verify and what remains unverified. A false "verified" is worse than an honest gap. (See
-`docs/desktop-agent-checklist.md`.) Saying it once is not enough: add a line to
-`docs/manual-qa-pending.md` (what you changed → how to check it) so the debt accumulates somewhere the
-user can work through, instead of being remembered only by whoever wrote it.
+`docs/desktop-agent-checklist.md`.) If the missing verification outlives the current task, propose a
+`docs/issues/` entry with an objective check and file it only after the user agrees; do not create a
+second QA backlog.
 
 **Docs are part of the change.** If you change behaviour this file, `docs/desktop-bridge-contract.md`,
 `docs/desktop-tauri-spec.md` or the README describe, update that document in the same change. A contract
 that outlives the code it describes is worse than no contract: the next agent obeys it.
 
 **Git:** never commit, create branches, or make other git changes without an explicit request from the user.
+
+## Where work is recorded
+
+Different records answer different questions; do not mix them:
+
+| Location | Answers |
+|---|---|
+| `docs/adr/` | Why a durable decision was made and what was rejected |
+| `docs/issues/roadmap.md` | Which evidence-backed defects and technical debt remain open |
+| `docs/proposals/README.md` | Which new product capabilities are planned, in progress, shipped, deferred or dropped |
+| `docs/reviews/` | What a dated review or manual verification run observed |
+| `CHANGELOG.md` | What changed for users |
+
+The boundary and status rules are authoritative in `docs/adr/0001-record-of-work-taxonomy.md`.
+The project-review report root is `docs/`: issue files plus `index.md`/`roadmap.md` live in
+`docs/issues/`, and snapshots live in `docs/reviews/`. `/burndown` reads
+`docs/issues/roadmap.md`.
+
+An issue is a problem relative to behavior already shipped or explicitly accepted. A proposal is a
+capability Recap does not have yet; do not give product priority a fake severity. When ordinary work
+uncovers debt that will not be fixed in the current task, check for a duplicate and propose one
+self-contained issue (`source: work`) in the final report; create it only after the user agrees.
+Status and human decisions live only in the roadmap, never in issue prose. Proposal status lives
+only in `docs/proposals/README.md`. An ADR that deliberately defers required work names the issue
+that tracks it.
 
 ## Architecture
 
