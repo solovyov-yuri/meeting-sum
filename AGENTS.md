@@ -128,7 +128,8 @@ src/
 └── providers/
     ├── factory.py    # make_summarizer() / make_transcriber() — the single provider wiring point
     ├── whisper.py    # WhisperTranscriber (lazy faster_whisper import after CUDA path setup)
-    └── llm.py        # LLMSummarizer (OpenAI-compatible client, streaming, chunking/truncation)
+    ├── llm.py        # LLMSummarizer (OpenAI-compatible client + budgeted native Ollama orchestration)
+    └── ollama_chat.py # native streaming transport, token estimate, incomplete/cancelled exceptions
 
 desktop/              # Tauri 2 desktop app
 ├── src/              # React + TypeScript UI; src/lib/bridge.ts is the single bridge entry (getBridge),
@@ -163,7 +164,9 @@ Non-obvious semantics:
   `transcription.language`, so English audio still yields a Russian summary unless set explicitly.
 - `summarization.max_transcript_chars` is the per-request LLM limit. `chunking_mode: chunk` splits long
   transcripts and merges per-chunk summaries; `truncate` cuts at the last newline before the limit.
-- `summarization.model.num_ctx` is Ollama's `options.num_ctx`; ignored by OpenAI/xAI.
+- `summarization.model.num_ctx` is native Ollama's `options.num_ctx`; null means Recap's 8192-token
+  default (4096 for a smaller memory budget). Other providers ignore it. Ollama chunks also respect
+  an estimated token budget for instructions/schema/output, with server truncation/shift disabled.
 - `summarization.mode`: `brief` (2–3 sentences) | `medium` (topic + discussions + decisions) |
   `detailed` (participants + timeline + tasks with owners) | `lecture` (a study summary of a talk,
   not meeting minutes). The authoritative list is `SUMMARY_MODES` in `prompts.py`.
@@ -197,6 +200,16 @@ Non-obvious semantics:
   `history.json`, or logs. The UI shows only a masked boolean.
 - **LLM streaming.** `LLMSummarizer.summarize()` streams tokens to stderr and returns the full string
   (raw text, or JSON when `structured=True`). It stays "dumb": validation/parsing live above it.
+  Ollama uses `/api/chat` with thinking off, bounded output and sequential budgeted chunks. Its
+  incomplete/empty responses fail; non-shrinking/deep merges fail instead of dropping the tail.
+  Intermediate evidence selections are cached in memory for one source transcript to reuse on final text fallback.
+  Native Ollama asks for JSON excerpt indices, validates them, and retains source excerpts verbatim;
+  only the final pass paraphrases. This is an exception to the generic text-chunk/JSON-final flow below.
+  Optional callbacks report chunk progress and poll cancellation before requests and during streams;
+  `SummarizationCancelled` bypasses JSON fallback and is translated to `RunResult("cancelled")`.
+  Before local Ollama summarization in a full run, Whisper unloads its weights (including from
+  the desktop's cached instance). The next transcription reloads them; transcribe-only and remote
+  summarization keep the previous warm-cache behavior.
 - **Structured summary pipeline.** The `MeetingSummary` object is the single source of truth for all
   formats. `workflows._generate_summary()` tries JSON generation (`response_format`, modes in
   `JSON_PROMPTS` only) → `parse_summary_json`. `LLMSummarizer` asks for `SUMMARY_JSON_SCHEMA` first

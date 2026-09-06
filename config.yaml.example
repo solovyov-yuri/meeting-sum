@@ -40,7 +40,7 @@ summarization:
     # api_key: required for openai; not needed for local providers. Do NOT put the secret here —
     #          set it via the RECAP_SUMMARIZATION_MODEL_API_KEY environment variable instead.
     # base_url: http://my-server:9000/v1       # overrides the provider preset URL
-    # num_ctx: 32768                           # Ollama context window in tokens; null = model default; ignored by OpenAI/xAI
+    # num_ctx: 8192                            # native Ollama context; null = 8192; try 4096 for less memory
 
 # Privacy
 # Set to true to suppress the warning when transcript is sent to an external endpoint.

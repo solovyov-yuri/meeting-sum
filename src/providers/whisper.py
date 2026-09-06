@@ -82,6 +82,7 @@ class WhisperTranscriber:
         self._beam_size = beam_size
         self._vad_filter = vad_filter
         self._condition_on_previous_text = condition_on_previous_text
+        self._unloaded = False
 
         # "default": float16 for CUDA (fast, GPU-native); int8 for CPU/auto (CPU-compatible).
         if compute_type == "default":
@@ -91,6 +92,13 @@ class WhisperTranscriber:
         with Console(stderr=True).status(f"[bold cyan]Loading model {model_name}…[/]"):
             self._model = WhisperModel(model_name, device=device, compute_type=compute_type)
         logger.info("Model %s loaded on %s.", model_name, device)
+
+    def release_device_memory(self) -> None:
+        """Unload weights before local LLM inference; retain a reloadable runtime."""
+        if not self._unloaded:
+            self._model.model.unload_model()
+            self._unloaded = True
+            logger.info("Whisper weights unloaded before local summarization.")
 
     def transcribe(
         self, audio: Path, language: str = "ru", *, on_progress: Callable[[float], None] | None = None
@@ -104,6 +112,9 @@ class WhisperTranscriber:
             TimeElapsedColumn,
         )
 
+        if self._unloaded:
+            self._model.model.load_model()
+            self._unloaded = False
         logger.info("Transcribing %s…", audio)
         segments_iter, info = self._model.transcribe(
             str(audio),

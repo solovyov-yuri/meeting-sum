@@ -860,6 +860,8 @@ def serve(lines: Iterable[str] | None = None) -> int:
 
     At most one transcriber is cached; a change to the transcription model drops the old one
     (freeing GPU memory) before building the new.
+    Full local-Ollama runs unload the cached object's weights before LLM inference;
+    its next transcription reloads them. Transcribe-only runs still keep weights warm.
     """
     _force_utf8_io()
     _configure_logging(SERVE_LOG_NAME)

@@ -258,7 +258,9 @@ def run_one_file(
         return failed(STEP_PREPROCESS, f"Аудиофайл не найден: {audio_path}")
     if audio_path.suffix.lower() not in AUDIO_EXTENSIONS:
         supported = ", ".join(sorted(ext.lstrip(".").upper() for ext in AUDIO_EXTENSIONS))
-        return failed(STEP_PREPROCESS, f"Неподдерживаемый формат аудио: {audio_path.suffix}. Поддерживаются: {supported}.")
+        return failed(
+            STEP_PREPROCESS, f"Неподдерживаемый формат аудио: {audio_path.suffix}. Поддерживаются: {supported}."
+        )
 
     # Build the summarizer once, up front (validates provider/mode/language: raises ValueError).
     # The same instance is reused in _summarize_and_export — no second construction. Transcribe-only
@@ -342,6 +344,15 @@ def run_one_file(
         return RunResult("cancelled", transcript_path, None, None, transcript_text, None, msg)
 
     # ── Summarize + export (shared with resummarize_one) ────────────────────────────
+    if (
+        provider_name == "ollama"
+        and not is_external_provider(settings.summarization.model.base_url, provider_name)
+        and callable(release := getattr(transcriber, "release_device_memory", None))
+    ):
+        try:
+            release()
+        except Exception:  # noqa: BLE001 - workflow boundary; transcript is already persisted
+            logger.warning("Could not unload Whisper before local summarization.", exc_info=True)
     assert summarizer is not None  # built above whenever stop_after != "transcribe"
     return _summarize_and_export(
         settings,
@@ -420,12 +431,15 @@ def _generate_summary(summarizer: LLMSummarizer, transcript_text: str, mode_name
     A failure of the *fallback* call propagates to the caller's step boundary.
     """
     from formatters import parse_summary  # noqa: PLC0415
+    from providers.ollama_chat import SummarizationCancelled  # noqa: PLC0415
     from summary_schema import SummaryValidationError, parse_summary_json  # noqa: PLC0415
 
     if summarizer.supports_structured:
         try:
             raw_json = summarizer.summarize(transcript_text, structured=True)
             return parse_summary_json(raw_json, mode_name)
+        except SummarizationCancelled:
+            raise
         except SummaryValidationError as exc:
             logger.warning("Structured summary did not validate (%s); falling back to text path.", exc)
         except Exception:  # noqa: BLE001 - any provider/generation error → text fallback
@@ -457,9 +471,8 @@ def _summarize_and_export(
     (during early validation) and hand it in. On LLM/IO failure returns ``partial_success``
     with the transcript paths preserved.
 
-    Generation is a single long provider call, so ``cancelled`` is polled around it, not inside
-    it (the summarizer stays dumb): a stop requested while the model is answering takes effect
-    as soon as the call returns, before anything is written.
+    Callbacks let the summarizer poll cancellation during streams and report chunk progress.
+    The boundary translates cooperative cancellation and keeps the transcript on disk.
     """
     from formatters import render_markdown, to_json, to_plain  # noqa: PLC0415
     from utils import write_text_atomic  # noqa: PLC0415
@@ -471,9 +484,17 @@ def _summarize_and_export(
 
     model_label = options.model or settings.summarization.model.name
     emit(ProgressEvent(STEP_SUMMARIZE, "running", f"Суммаризация началась: {provider_name} / {model_label}."))
+    if callable(set_callbacks := getattr(summarizer, "set_callbacks", None)):
+        set_callbacks(cancelled, lambda message: emit(ProgressEvent(STEP_SUMMARIZE, "running", message)))
     try:
         summary = _generate_summary(summarizer, transcript.to_text(), mode_name)
     except Exception as exc:
+        from providers.ollama_chat import SummarizationCancelled  # noqa: PLC0415
+
+        if isinstance(exc, SummarizationCancelled):
+            msg = "Остановлено пользователем во время суммаризации."
+            emit(ProgressEvent(STEP_SUMMARIZE, "cancelled", msg))
+            return RunResult("cancelled", transcript_path, None, None, transcript_text, None, msg)
         logger.exception("Summarization failed")
         msg = humanize_error(exc)
         emit(ProgressEvent(STEP_SUMMARIZE, "error", msg))
@@ -525,7 +546,7 @@ def resummarize_one(
     transcript. ``summary_format`` is as in :func:`run_one_file`.
 
     ``cancel`` is the same cooperative check as in :func:`run_one_file`: polled at the step
-    boundaries around the single LLM call, it returns ``RunResult("cancelled", …)`` with the
+    boundaries and during streamed generation, it returns ``RunResult("cancelled", …)`` with the
     existing transcript still pointed at, so nothing is lost.
     """
     from providers.factory import make_summarizer  # noqa: PLC0415

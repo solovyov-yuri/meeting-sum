@@ -15,9 +15,7 @@ class FakeTranscriber:
     def __init__(self, transcript: Transcript) -> None:
         self._transcript = transcript
 
-    def transcribe(
-        self, audio: Path, language: str = "ru", *, on_progress: object = None
-    ) -> Transcript:
+    def transcribe(self, audio: Path, language: str = "ru", *, on_progress: object = None) -> Transcript:
         if callable(on_progress):
             on_progress(0.5)  # emit one progress tick so the wiring is exercised
         return self._transcript
@@ -38,6 +36,39 @@ class FailingSummarizer:
 
     def summarize(self, text: str, structured: bool = False) -> str:
         raise ConnectionError("LLM down")
+
+
+@pytest.mark.parametrize("provider,expected", [("ollama", True), ("lm-studio", False)])
+def test_whisper_released_before_ollama(tmp_path, audio_file, monkeypatch, provider, expected):
+    import providers.factory as factory_mod
+
+    transcript = Transcript(segments=(Segment(0, 1, "привет"),))
+    events = []
+
+    class Releasable(FakeTranscriber):
+        def release_device_memory(self):
+            assert (tmp_path / "tr.txt").exists()
+            events.append("released")
+
+    class CheckingSummarizer(FakeSummarizer):
+        def summarize(self, *args, **kwargs):
+            assert ("released" in events) is expected
+            events.append("summarized")
+            return "итоги встречи"
+
+    monkeypatch.setattr(factory_mod, "make_transcriber", lambda settings: Releasable(transcript))
+    monkeypatch.setattr(factory_mod, "make_summarizer", lambda *a, **k: CheckingSummarizer())
+    result = run_one_file(
+        RunOptions(
+            audio_path=audio_file,
+            transcript_path=tmp_path / "tr.txt",
+            summary_path=tmp_path / "sum.txt",
+            provider=provider,
+        ),
+        settings=Settings(),
+    )
+    assert result.status == "success"
+    assert events[-1] == "summarized"
 
 
 @pytest.fixture()
@@ -87,6 +118,7 @@ def test_run_one_file_transcribe_only_skips_summarize(
 
     tr = Transcript(segments=(Segment(0.0, 1.0, "привет"),))
     monkeypatch.setattr(factory_mod, "make_transcriber", lambda settings: FakeTranscriber(tr))
+
     # summarizer must NOT be built for transcribe-only — make it explode if constructed.
     def _no_summarizer(*_a: object, **_k: object) -> object:
         raise AssertionError("make_summarizer must not be called in transcribe-only mode")
@@ -142,7 +174,9 @@ def test_run_one_file_force_preprocess_overrides_disabled(
     _patch_providers(monkeypatch, Transcript(segments=(Segment(0.0, 1.0, "x"),)), FakeSummarizer())
 
     events: list[ProgressEvent] = []
-    options = RunOptions(audio_path=audio_file, transcript_path=tmp_path / "tr.txt", summary_path=tmp_path / "s.txt", provider="ollama")
+    options = RunOptions(
+        audio_path=audio_file, transcript_path=tmp_path / "tr.txt", summary_path=tmp_path / "s.txt", provider="ollama"
+    )
     # Settings() defaults preprocessing.enabled=False; force_preprocess must flip it on.
     run_one_file(options, settings=Settings(), progress=events.append, force_preprocess=True)
 
@@ -163,7 +197,9 @@ def test_preprocess_one_writes_output(tmp_path: Path, audio_file: Path, monkeypa
     assert result.transcript_path is None and result.summary_path is None
 
 
-def test_preprocess_one_defaults_next_to_audio(tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_preprocess_one_defaults_next_to_audio(
+    tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr("preprocessing.preprocess_audio", lambda inp, out, cfg: out.write_bytes(b"x"))
     result = workflows.preprocess_one(RunOptions(audio_path=audio_file), settings=Settings())
     assert result.output_path == audio_file.parent / "meeting.preprocessed.wav"
@@ -259,7 +295,9 @@ def test_run_one_file_structured_json_path(tmp_path: Path, audio_file: Path, mon
     assert data["blocks"][1]["groups"][1]["items"] == ["сделать"]
 
 
-def test_run_one_file_downloads_cuda_when_frozen(tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_one_file_downloads_cuda_when_frozen(
+    tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Portable build (frozen) + device=cuda + libs missing → a `download` step runs, then the run
     # proceeds. Gated on sys.frozen, so only this test exercises _ensure_cuda's wiring.
     import sys as _sys
@@ -291,7 +329,9 @@ def test_run_one_file_downloads_cuda_when_frozen(tmp_path: Path, audio_file: Pat
     assert any(e.step == "download" for e in events)
 
 
-def test_run_one_file_cuda_download_cancelled(tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_one_file_cuda_download_cancelled(
+    tmp_path: Path, audio_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import sys as _sys
 
     import cuda_support
@@ -594,9 +634,7 @@ def _exploding_transcriber(settings: object) -> object:
     raise AssertionError("transcriber must not be built during resummarize")
 
 
-def test_resummarize_one_uses_existing_transcript(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_resummarize_one_uses_existing_transcript(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     transcript_path = tmp_path / "tr.txt"
     transcript_path.write_text("[0.00s -> 1.00s] обсудили план\n", encoding="utf-8")
 
@@ -624,9 +662,7 @@ def test_resummarize_one_uses_existing_transcript(
     assert "резюме" in result.summary_text
 
 
-def test_resummarize_one_non_utf8_transcript_fails_cleanly(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_resummarize_one_non_utf8_transcript_fails_cleanly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # REL-001: a cp1251-encoded transcript must yield a friendly failure, not a raw
     # UnicodeDecodeError traceback (it subclasses ValueError, so plain `except OSError` misses it).
     transcript_path = tmp_path / "tr.txt"

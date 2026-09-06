@@ -54,6 +54,23 @@ def test_model_init_params(fake_faster_whisper: dict) -> None:
     assert fake_faster_whisper["compute_type"] == "int8"
 
 
+def test_release_then_transcribe_reloads_weights(fake_faster_whisper: dict) -> None:
+    from providers.whisper import WhisperTranscriber
+
+    transcriber = WhisperTranscriber(model_name="tiny", device="cpu")
+    runtime = MagicMock()
+    transcriber._model.model = runtime
+    transcriber.release_device_memory()
+    transcriber.release_device_memory()
+    runtime.unload_model.assert_called_once_with()
+    assert transcriber._unloaded
+    transcriber.transcribe(Path("test.wav"))
+    runtime.load_model.assert_called_once_with()
+    assert not transcriber._unloaded
+    transcriber.transcribe(Path("test.wav"))
+    runtime.load_model.assert_called_once()
+
+
 def test_default_compute_type_resolves_to_float16_on_cuda(fake_faster_whisper: dict) -> None:
     from providers.whisper import WhisperTranscriber
 

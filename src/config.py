@@ -45,7 +45,7 @@ class SummarizationModelSettings:
     name: str = "qwen3.5:latest"
     api_key: str | None = None
     base_url: str | None = None
-    # Ollama context window in tokens (options.num_ctx). null = model default; ignored by OpenAI/xAI.
+    # Native Ollama context in tokens. null = Recap's 8192-token budget; ignored by other providers.
     num_ctx: int | None = None
 
 

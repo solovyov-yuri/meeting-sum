@@ -70,6 +70,7 @@ def make_summarizer(
         chunking_mode=summarization.chunking_mode,
         num_ctx=model.num_ctx,
         json_prompt=json_prompt,
+        ollama=provider_name == "ollama",
     )
 
 
